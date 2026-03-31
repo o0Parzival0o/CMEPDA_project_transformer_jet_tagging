@@ -11,19 +11,21 @@ Versione semplificata con solo il **jet flavour classification head**
 ## Struttura del progetto
 
 ```
-gn2_project/
-├── main.py                  ← entry point
+CMEPDA_project_transformer_jet_tagging/
+├── main.py                         ← entry point
 ├── configs/
-│   └── default.yaml         ← tutti gli iperparametri
-├── data/
-│   └── jets.h5              ← metti qui il tuo file HDF5
-├── src/
-│   ├── dataset.py           ← caricamento dati, preprocessing, DataLoader
-│   ├── model.py             ← architettura GN2 (transformer)
-│   ├── discriminant.py      ← D_b, D_c, operating points
-│   ├── train.py             ← training loop
-│   └── evaluate.py          ← valutazione, plot
-└── outputs/                 ← creata automaticamente
+│   └── config.json                 ← all hyperparams and settings
+│   └── default.yaml                ← tutti gli iperparametri
+├── dataset/
+│   └── mc-flavtag-ttbar-small.h5   ← put here the .h5 file
+├── src/trasformer_jet_tagging/
+│   ├── dataset.py                  ← data loading, preprocessing
+│   ├── model.py                    ← architettura GN2 (transformer)
+│   ├── discriminant.py             ← D_b, D_c, operating points
+│   ├── train.py                    ← training loop
+│   ├── evaluate.py                 ← valutazione, plot
+│   └── utils.py                    ← utility functions
+└── outputs/                        ← creata automaticamente
     ├── best_model.pt
     ├── last_model.pt
     ├── scaler.pkl
@@ -37,9 +39,9 @@ gn2_project/
 
 ---
 
-## Requisiti
+## Requirements
 
-Python 3.9+ con:
+Python 3.13+ with:
 
 ```
 torch>=2.0.0
@@ -53,58 +55,58 @@ tqdm>=4.65.0
 
 ---
 
-## Installazione
+## Installation
 
-### 1. Crea un ambiente virtuale
+### 1. Make a virtual environment (reccomended)
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate          # Linux/macOS
-# oppure: venv\Scripts\activate   # Windows
+# or: venv\Scripts\activate   # Windows
 ```
 
-### 2. Installa le dipendenze
+### 2. Install dependencies
 
-**Con GPU (CUDA 11.8):**
+**With GPU (CUDA 11.8):**
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu118
 pip install numpy h5py scikit-learn matplotlib pyyaml
 ```
 
-**Con GPU (CUDA 12.1):**
+**With GPU (CUDA 12.1):**
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu121
 pip install numpy h5py scikit-learn matplotlib pyyaml
 ```
 
-**Solo CPU (più lento ma funziona):**
+**Only CPU (slow):**
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install numpy h5py scikit-learn matplotlib pyyaml
 ```
 
-### 3. Metti il file HDF5 nella cartella `data/`
+### 3. Put the HDF5 file in `data/` folder
 
 ```bash
-cp /percorso/al/tuo/file.h5 data/jets.h5
+cp /path/to/your/file.h5 data/file_name.h5
 ```
 
-Il file deve avere questa struttura interna:
+The expected structure of the HDF5 file is:
 ```
-/jets          — variabili jet-level (structured array)
-/tracks        — variabili track-level (structured array)
-/eventwise     — variabili evento
+/jets          — variables jet-level (structured array)
+/tracks        — variables track-level (structured array)
+/eventwise     — variables events
 /truth_hadrons — info truth hadron
 ```
 
-Se il tuo file ha un nome diverso per il gruppo principale, aggiorna
+Update the file name in
 `configs/default.yaml`.
 
 ---
 
-## Esecuzione
+## Execution
 
-### Training completo
+### Full training (default config)
 
 ```bash
 python main.py
@@ -208,7 +210,7 @@ Tutte le 24 feature track sono listate in `configs/default.yaml`.
 Per ogni jet (B jet nel batch):
 
   [jet_pt, jet_eta]               (2 feature)
-  [40 tracce × 24 feature]        + maschera booleana
+  [40 tracce × 19 feature]        + maschera booleana
         │
         ▼
   Concatena jet features a ogni traccia → (B, 40, 26)

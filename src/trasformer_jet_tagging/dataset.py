@@ -41,11 +41,31 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 # logging configuration
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("GN2DataLoader")
+if __name__ == "__main__":
+    logging.basicConfig(
+        level  = logging.INFO,
+        format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger("GN2_dataset")
+else:
+    logger = logging.getLogger("GN2")
+
+JET_FLAVOUR_MAP = {0: 0, 4: 1, 5: 2, 15: 3}  # light, c, b, tau
+JET_FLAVOUR = 'HadronConeExclTruthLabelID'
+JET_VARS_DEFAULT = ['pt', 'eta']
+TRACK_VARS_DEFAULT = [
+    # tracks in the perigee repn
+    'qOverP', 'deta', 'dphi', 'd0', 'z0SinTheta',
+    # diagonal of the track cov matrix (first 3 els)
+    'qOverPUncertainty', 'thetaUncertainty', 'phiUncertainty',
+    # lifetime signed s(d0) and s(z0*sin(theta))
+    'lifetimeSignedD0Significance', 'lifetimeSignedZ0SinThetaSignificance',
+    # hit level variables
+    'numberOfPixelHits', 'numberOfSCTHits',
+    'numberOfInnermostPixelLayerHits', 'numberOfNextToInnermostPixelLayerHits',
+    'numberOfInnermostPixelLayerSharedHits', 'numberOfInnermostPixelLayerSplitHits',
+    'numberOfPixelSharedHits', 'numberOfPixelSplitHits', 'numberOfSCTSharedHits'
+]
 
 class GN2Dataset(Dataset):
     """
@@ -59,31 +79,20 @@ class GN2Dataset(Dataset):
         n_tracks (int, optional): maximum number of tracks for each jet (padding/cropping).
         jet_vars (list, optional): list of jet variables.
         track_vars (list, optional): list of tracks variables.
+        jet_flavour (str, optional): name of the jet flavour variable in the HDF5 file.
+        jet_flavour_map (dict, optional): mapping from raw hadron labels to target classes.
+        norm_stats (dict, optional): normalization statistics for jet and track features.
     """
-
-    JET_FLAVOUR_MAP = {0: 0, 4: 1, 5: 2, 15: 3}  # light, c, b, tau
-    JET_VARS_DEFAULT = ['pt', 'eta']
-    TRACK_VARS_DEFAULT = [
-        # tracks in the perigee repn
-        'qOverP', 'deta', 'dphi', 'd0', 'z0SinTheta',
-        # diagonal of the track cov matrix (first 3 els)
-        'qOverPUncertainty', 'thetaUncertainty', 'phiUncertainty',
-        # lifetime signed s(d0) and s(z0*sin(theta))
-        'lifetimeSignedD0Significance', 'lifetimeSignedZ0SinThetaSignificance',
-        # hit level variables
-        'numberOfPixelHits', 'numberOfSCTHits',
-        'numberOfInnermostPixelLayerHits', 'numberOfNextToInnermostPixelLayerHits',
-        'numberOfInnermostPixelLayerSharedHits', 'numberOfInnermostPixelLayerSplitHits',
-        'numberOfPixelSharedHits', 'numberOfPixelSplitHits', 'numberOfSCTSharedHits'
-    ]
 
     def __init__(
         self, 
         file_path: str,
         indices: np.ndarray,
         n_tracks: int = 40,
-        jet_vars: Optional[list] = None,
-        track_vars: Optional[list] = None,
+        jet_vars: Optional[list] = JET_VARS_DEFAULT,
+        track_vars: Optional[list] = TRACK_VARS_DEFAULT,
+        jet_flavour : Optional[str] = JET_FLAVOUR,
+        jet_flavour_map: Optional[Dict[int, int]] = JET_FLAVOUR_MAP,
         norm_stats: Optional[Dict] = None
     ):
         """
@@ -93,19 +102,27 @@ class GN2Dataset(Dataset):
             file_path (str): path of .h5 file.
             indices (np.ndarray): indices of jets to include in the dataset.
             n_tracks (int, optional): maximum number of tracks for each jet (padding/cropping).
-            jet_vars (list, optional): list of jet variables.
-            track_vars (list, optional): list of tracks variables.
+            jet_vars (list, optional): list of jet variables. Defaults to JET_VARS_DEFAULT if not provided.
+            track_vars (list, optional): list of tracks variables. Defaults to TRACK_VARS_DEFAULT if not provided.
+            jet_flavour (str, optional): name of the jet flavour variable in the HDF5 file. Defaults to JET_FLAVOUR if not provided.
+            jet_flavour_map (dict, optional): mapping from raw hadron labels to target classes. Defaults to JET_FLAVOUR_MAP if not provided.
+            norm_stats (dict, optional): normalization statistics for jet and track features. Defaults to None (no normalization) if not provided.
+
+        Raises:
+            FileNotFoundError: if the specified HDF5 file does not exist.
+            KeyError: if the expected datasets ('jets', 'tracks') are not found in the HDF5 file.
         """
-        self.file_path = file_path
-        self.indices = indices
-        self.n_tracks = n_tracks
-        self.jet_vars = jet_vars or self.JET_VARS_DEFAULT
-        self.track_vars = track_vars or self.TRACK_VARS_DEFAULT
+        self.file_path  = file_path
+        self.indices    = indices
+        self.n_tracks   = n_tracks
+        self.jet_vars   = jet_vars
+        self.track_vars = track_vars
+        self.jet_flavour = jet_flavour
+        self.jet_flavour_map = jet_flavour_map
+        self.norm_stats = norm_stats
 
         # initialize h5py file handler as None; will be opened lazily in _get_handler()
         self.handler = None
-
-        self.norm_stats = norm_stats
         
         # initial check
         try:
@@ -160,10 +177,10 @@ class GN2Dataset(Dataset):
 
         Returns:
             dict: {
-                'jet_features': torch.Tensor,
-                'track_features': torch.Tensor,
-                'mask': torch.Tensor,
-                'label': torch.Tensor
+                "jet_features"      (torch.Tensor, shape (n_jet_vars,)):            normalized jet-level features,
+                "track_features"    (torch.Tensor, shape (n_tracks, n_track_vars)): normalized track-level features,
+                "mask"              (torch.Tensor, shape (n_tracks,)):              boolean mask indicating valid tracks,
+                "label"             (torch.Tensor, shape ()):                       ground truth label
             }
         """
         f = self._get_handler()
@@ -173,7 +190,7 @@ class GN2Dataset(Dataset):
         # 1. Loading Jet Features and normalization
         jet_data = f['jets'][real_idx]
         
-        jet_pt = jet_data['pt']
+        jet_pt  = jet_data['pt']
         jet_eta = jet_data['eta']
         # pt log-trasformation
         jet_pt_log = np.log(jet_pt)
@@ -183,15 +200,15 @@ class GN2Dataset(Dataset):
                 logger.warning("Normalization stats for jets are incomplete. Expected at least 2 values for 'jet_mu' and 'jet_sigma'. Using raw values.")
             else:
                 jet_pt_log = (jet_pt_log - self.norm_stats['jet_mu'][0]) / self.norm_stats['jet_sigma'][0]
-                jet_eta = (jet_eta - self.norm_stats['jet_mu'][1]) / self.norm_stats['jet_sigma'][1]
+                jet_eta    = (jet_eta - self.norm_stats['jet_mu'][1]) / self.norm_stats['jet_sigma'][1]
         else:
             logger.info("Normalization stats not provided for jets. Using raw values.")
         
         jet_features = np.array([jet_pt_log, jet_eta], dtype=np.float32)
         
         # 2. Loading Label
-        raw_label = jet_data['HadronConeExclTruthLabelID']
-        target = self.JET_FLAVOUR_MAP.get(int(raw_label), 0)
+        raw_label = jet_data[self.jet_flavour]
+        target = self.jet_flavour_map.get(int(raw_label), 0)
 
         # 3. Loading Tracks with 'valid' Filter (Optimized with slicing)
         tracks_all = f['tracks'][real_idx]
@@ -199,7 +216,7 @@ class GN2Dataset(Dataset):
         valid_tracks = tracks_all[tracks_all['valid'] == True]
         
         n_available = len(valid_tracks)
-        n_to_read = min(n_available, self.n_tracks)
+        n_to_read   = min(n_available, self.n_tracks)
 
         # pre-allocate arrays for track features and mask
         track_features = np.zeros((self.n_tracks, len(self.track_vars)), dtype=np.float32)
@@ -211,7 +228,7 @@ class GN2Dataset(Dataset):
                 raw_values = valid_tracks[var][:n_to_read]
                 # normalization
                 if self.norm_stats and 'track_mu' in self.norm_stats and 'track_sigma' in self.norm_stats:
-                    mu = self.norm_stats['track_mu'][i]
+                    mu    = self.norm_stats['track_mu'][i]
                     sigma = self.norm_stats['track_sigma'][i]
                     track_features[:n_to_read, i] = (raw_values - mu) / sigma
                 else:
@@ -221,60 +238,33 @@ class GN2Dataset(Dataset):
             padding_mask[:n_to_read] = True
 
         return {
-            'jet_features': torch.from_numpy(jet_features),
+            'jet_features':   torch.from_numpy(jet_features),
             'track_features': torch.from_numpy(track_features),
-            'mask': torch.from_numpy(padding_mask),
-            'label': torch.tensor(target, dtype=torch.long)
+            'mask':           torch.from_numpy(padding_mask),
+            'label':          torch.tensor(target, dtype=torch.long)
         }
 
 if __name__ == "__main__":
 
     # Example usage and testing of the dataset
-
-    from sklearn.model_selection import train_test_split
     from utils import compute_normalization_stats
 
     PATH = "/home/lnasini/Desktop/PROGETTO_CMEPDA/CMEPDA_project_transformer_jet_tagging/dataset/mc-flavtag-ttbar-small.h5"
 
     with h5py.File(PATH, 'r') as f:
-        pt = f['jets']['pt']
-        eta = f['jets']['eta']
-    
-    n_jets_total   = len(pt)
-    kinematic_mask = (pt > 20_000) & (pt < 250_000) & (np.abs(eta) < 2.5)
-    valid_indices = np.where(kinematic_mask)[0]
+        n_jets = len(f['jets'])
+        logger.info(f"Total jets in file: {n_jets}")
+        indices = np.arange(n_jets)
 
-    splitting = [0.5, 0.3, 0.2]
+    norm_stats = compute_normalization_stats(PATH, indices)
 
-    training_indices, test_indices = train_test_split(
-        valid_indices, 
-        train_size=splitting[0] + splitting[1], 
-        random_state=42, 
-        shuffle=True
-    )
-    train_indices, val_indices = train_test_split(
-        training_indices, 
-        train_size=splitting[0] / (splitting[0] + splitting[1]),
-        random_state=42, 
-        shuffle=True
-    )
-
-    norm_stats = compute_normalization_stats(PATH, train_indices)
-
-    logger.info(f"Split completed: Train={len(train_indices)}, Val={len(val_indices)}, Test={len(test_indices)}")
-    train_dataset = GN2Dataset(PATH, indices=train_indices, norm_stats=norm_stats)
-    val_dataset   = GN2Dataset(PATH, indices=val_indices,   norm_stats=norm_stats)
-    test_dataset  = GN2Dataset(PATH, indices=test_indices,  norm_stats=norm_stats)
-
-    train_loader = DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=4)
-    val_loader   = DataLoader(val_dataset,   batch_size=1024, shuffle=False, num_workers=4)
-    test_loader  = DataLoader(test_dataset,  batch_size=1024, shuffle=False, num_workers=4)
+    dataset = GN2Dataset(PATH, indices=indices, norm_stats=norm_stats)
 
     # Test
-    sample = train_dataset[0]
+    sample = dataset[0]
     
     logger.info(f"Batch loaded.")
-    logger.info(f"Shape:                {train_dataset.shape}")
+    logger.info(f"Shape:                {dataset.shape}")
     logger.info(f"Shape jets:           {sample['jet_features'].shape}")
     logger.info(f"Shape tracks:         {sample['track_features'].shape}")
     logger.info(f"Num. valid tracks:    {sample['mask'].sum()}")

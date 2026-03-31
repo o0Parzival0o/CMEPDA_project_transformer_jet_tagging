@@ -1,0 +1,97 @@
+{
+  "data": {
+    "h5_path": "/home/lnasini/Desktop/PROGETTO_CMEPDA/CMEPDA_project_transformer_jet_tagging/dataset/mc-flavtag-ttbar-small.h5",
+
+    "max_tracks": 40,
+
+    "jet_features": [
+      "pt",
+      "eta"
+    ],
+    "track_features": [
+        "qOverP", "deta", "dphi", "d0", "z0SinTheta",
+        "qOverPUncertainty", "thetaUncertainty", "phiUncertainty",
+        "lifetimeSignedD0Significance", "lifetimeSignedZ0SinThetaSignificance",
+        "numberOfPixelHits", "numberOfSCTHits", "numberOfInnermostPixelLayerHits",
+        "numberOfNextToInnermostPixelLayerHits", "numberOfInnermostPixelLayerSharedHits",
+        "numberOfInnermostPixelLayerSplitHits", "numberOfPixelSharedHits",
+        "numberOfPixelSplitHits","numberOfSCTSharedHits"
+    ],
+    "label": "HadronConeExclTruthLabelID",
+    "label_map": {
+      "5":  0,
+      "4":  1,
+      "0":  2,
+      "15": 3
+    },
+
+    "pt_min_mev": 20000.0,
+    "pt_max_mev": 250000.0,
+    "eta_max":    2.5,
+
+    "train_fraction": 0.5,
+    "val_fraction":   0.3,
+    "test_fraction":  0.2,
+
+    "batch_size": 10000,
+    "shuffle": true,
+    "split_seed": 42
+  },
+  "model": {
+    "n_jet_features": 2,
+    "n_track_features": 19,
+
+    "num_classes": 4,
+
+    "initialiser_hidden_dim": 256,
+    "initialiser_output_dim": 256,
+    "transformer_n_layers": 4,
+    "transformer_n_heads": 8,
+    "transformer_embed_dim": 256,
+    "transformer_ffn_dim": 512,
+    "transformer_dropout": 0.0,
+    "head_hidden_dims": [
+      128,
+      64,
+      32
+    ],
+    "head_dropout": 0.0,
+    "activation": "relu"
+  },
+  "training": {
+    "max_epochs": 100,
+    "batch_size": 12000,
+    "num_workers": 4,
+    "early_stopping_patience": 15,
+    "optimizer": "adamw",
+    "weight_decay": 1.0e-05,
+    "lr_initial": 1.0e-07,
+    "lr_peak": 0.0005,
+    "lr_final": 1.0e-05,
+    "warmup_fraction": 0.01,
+    "device": "auto",
+    "grad_clip_norm": 1.0,
+    "log_every_n_batches": 50
+  },
+  "discriminant": {
+    "fc_btag": 0.2,
+    "ftau_btag": 0.05,
+    "fb_ctag": 0.3,
+    "ftau_ctag": 0.01,
+    "operating_points": [
+      0.65,
+      0.7,
+      0.77,
+      0.85,
+      0.9
+    ]
+  },
+  "output": {
+    "save_dir": "/home/lnasini/Desktop/PROGETTO_CMEPDA/CMEPDA_project_transformer_jet_tagging/outputs/",
+    "save_norm_stats": "/home/lnasini/Desktop/PROGETTO_CMEPDA/CMEPDA_project_transformer_jet_tagging/outputs/norm_stats.json",
+    "save_best": true,
+    "save_last": true,
+    "plot_roc": true,
+    "plot_rejection_vs_efficiency": true
+  }
+}
