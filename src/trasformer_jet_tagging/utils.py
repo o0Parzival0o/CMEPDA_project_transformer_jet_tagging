@@ -4,6 +4,7 @@ utils.py
 
 import logging
 import json
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import h5py
@@ -29,9 +30,9 @@ TRACK_VARS_DEFAULT = [
 def compute_normalization_stats(
     file_path: str,
     train_indices: np.ndarray,
-    jet_vars: list = JET_VARS_DEFAULT,
-    track_vars: list = TRACK_VARS_DEFAULT,
-    batch_size: int = 10_000
+    jet_vars: Optional[List[str]] = None,
+    track_vars: Optional[List[str]] = None,
+    batch_size: Optional[int] = 10_000
 ):
     """
     Compute mean and std normalization statistics on the training set only.
@@ -58,6 +59,9 @@ def compute_normalization_stats(
             "track_mu"      (np.ndarray, shape (n_track_vars,)):    Per-feature mean computed over all valid tracks in the training set.
             "track_sigma"   (np.ndarray, shape (n_track_vars,)):    Per-feature standard deviation over all valid tracks in the training set.
     """
+
+    jet_vars   = jet_vars   if jet_vars   is not None else JET_VARS_DEFAULT
+    track_vars = track_vars if track_vars is not None else TRACK_VARS_DEFAULT
 
     # h5py requires indices in strictly increasing order
     sorted_indices = np.sort(train_indices)

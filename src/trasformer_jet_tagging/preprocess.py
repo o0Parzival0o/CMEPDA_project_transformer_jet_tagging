@@ -123,7 +123,7 @@ def main(config_path: str):
     )
     save_indices(output_dir, train_indices, val_indices, test_indices)
 
-    # 4. Normalization statistics — computed on training set ONLY
+    # 4. Normalization statistics - computed on training set ONLY
     logger.info("Computing normalization statistics on training set ...")
     norm_stats = utils.compute_normalization_stats(
         file_path     = file_path,

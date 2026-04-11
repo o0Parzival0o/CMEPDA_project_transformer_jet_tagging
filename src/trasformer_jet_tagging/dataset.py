@@ -5,34 +5,41 @@ High-performance GN2 data pipeline for HDF5 datasets.
 Optimized for Large-Scale Jet Flavour Tagging at ATLAS.
 
 HDF5 Structure:
-  /jets          — Jet-level features (1 row per jet).
-  /tracks        — Track-level features (Jagged or fixed-size array indexed by jet).
-  /eventwise     — Event-level metadata (e.g., eventNumber, mu).
-  /truth_hadrons — Simulation truth for hadron labeling and performance studies.
+  /jets          - Jet-level features (1 row per jet).
+  /tracks        - Track-level features (Jagged or fixed-size array indexed by jet).
+  /eventwise     - Event-level metadata (e.g., eventNumber, mu).
+  /truth_hadrons - Simulation truth for hadron labeling and performance studies.
 
 The pipeline utilises 'Lazy Loading' via h5py to handle datasets that exceed 
 available RAM, using NumPy vectorization for high-speed feature extraction.
 
 Pipeline Workflow:
-  1. Index Splitting: Generate Train/Val/Test indices using scikit-learn's 
-     train_test_split to ensure zero data leakage.
-  2. Data Loading: Batch extraction of jet and track features using a custom
-     collate_fn that reads an entire batch in a single HDF5 call.
-  3. Track Quality Filtering: Active filtering of track candidates using 
-      the 'valid' boolean flag before processing.
-  4. Padding & Masking: Enforce a fixed-size track array (default max_tracks=40). 
-     Generate a boolean padding mask to inform the Transformer's Self-Attention 
-     mechanism which inputs to ignore.
-  5. Feature Engineering: 
-     - Jet-level: Log-transformation of pT and Z-score standardization.
-     - Track-level: Z-score standardization (mu and sigma computed ONLY on training set).
-  6. Class Balancing: Optional 2D re-sampling (pT, eta) to flatten the 
-     background distributions and match the reference class (c-jets).
-  7. Integration: Wraps the logic into a PyTorch DataLoader with 
-     multi-process worker support and pinned memory for GPU acceleration.
+
+1. Index Splitting:
+   Generate Train/Val/Test indices using scikit-learn's train_test_split to ensure zero data leakage.
+
+2. Data Loading:
+   Batch extraction of jet and track features using a custom collate_fn that reads an entire batch in a single HDF5 call.
+
+3. Track Quality Filtering:
+   Active filtering of track candidates using the 'valid' boolean flag before processing.
+
+4. Padding & Masking:
+   Enforce a fixed-size track array (default max_tracks=40).
+   Generate a boolean padding mask to inform the Transformer's Self-Attention mechanism.
+
+5. Feature Engineering:
+   - Jet-level: Log-transformation of pT and Z-score normalization.
+   - Track-level: Z-score normalization (computed only on training set).
+
+6. Class Balancing:
+   Optional 2D re-sampling (pT, eta) to flatten distributions.
+
+7. Integration:
+   Wraps everything into a PyTorch DataLoader with optimized batching.
 
 Performance notes:
-  - Indices passed to GN2Dataset MUST be sorted (np.sort) to ensure
+  - Indices passed to GN2Dataset MUST be sorted to ensure
     contiguous HDF5 reads and avoid random seeks on disk.
   - Use build_dataloader() which sets up the BatchCollator automatically.
     This replaces per-item __getitem__ HDF5 access with a single batched
@@ -130,7 +137,7 @@ class GN2Dataset(Dataset):
         self.norm_stats      = norm_stats
 
         if norm_stats is None:
-            logger.warning("No norm_stats provided — raw values will be used.")
+            logger.warning("No norm_stats provided - raw values will be used.")
 
         # warning if indices are not sorted (performance degradation)
         if len(indices) > 1 and not np.all(indices[:-1] <= indices[1:]):
@@ -143,7 +150,7 @@ class GN2Dataset(Dataset):
         try:
             with h5py.File(self.file_path, 'r') as f:
                 self.n_jets = len(f['jets'])
-                logger.info(f"Success loading {file_path}: {self.n_jets} jets found.")
+                logger.info(f"Success loading {file_path}: {self.n_jets:,} jets found.")
                 logger.debug(f"Original shape 'tracks': {f['tracks'].shape}")
         except (FileNotFoundError, KeyError) as e:
             logger.error(f"Error loading file {file_path}: {e}")
@@ -292,7 +299,7 @@ class _IndexDataset(Dataset):
     This is the key to making BatchCollator work correctly with PyTorch's
     DataLoader: the DataLoader calls __getitem__ on each element of a batch,
     collects the results into a list, and passes that list to collate_fn.
-    By returning the raw index here, collate_fn receives List[int] — exactly
+    By returning the raw index here, collate_fn receives List[int] - exactly
     what BatchCollator needs to do a single batched HDF5 read.
     """
 

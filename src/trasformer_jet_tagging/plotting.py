@@ -1,85 +1,438 @@
 """
-preprocess.py
-=============
-Standalone preprocessing script for the GN2 jet flavour tagging pipeline.
+plotting.py
+===========
+Visualization module for the GN2 jet flavour tagging pipeline.
 
-Run this script ONCE before training. It will:
-  1. Load jet kinematics from the HDF5 file.
-  2. Apply kinematic selection (pT, eta cuts).
-  3. Split valid indices into train / val / test sets.
-  4. Compute normalization statistics (mu, sigma) on the training set only.
-  5. Save indices and norm stats to disk.
+Generates plots of input and output variables,
+reading directly from the HDF5 file and/or a DataLoader.
 
-Outputs (under the directory specified in config["output"]["preprocess_dir"]):
-  preprocess_dir/
-  ├── indices/
-  │   ├── train_indices.npy
-  │   ├── val_indices.npy
-  │   └── test_indices.npy
-  └── norm_stats.json
-
-Usage:
-    python preprocess.py --config configs/config.json
+Plots produced:
+  1. Jet variables      - pt (raw and log), eta per flavour class.
+  2. Track variables    - per-variable distribution split by flavour.
+  3. Correlations       - jet-level Pearson correlation matrix;
+                          track-level correlation matrix (mean over jets).
 """
 
+import json
 import logging
+from pathlib import Path
+from typing import Dict, List
 
-import torch
+import h5py
 import numpy as np
-from torch.utils.data import DataLoader
+import matplotlib
+matplotlib.use("Agg")                       # non-interactive backend (no display needed)
 import matplotlib.pyplot as plt
 
-# logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger("GN2.plotting")
 
 
+FLAVOUR_LABELS = {0: "light", 1: "c-jet", 2: "b-jet", 3: "tau"}
+FLAVOUR_COLORS = {0: "#55A868", 1: "#DD8452", 2: "#4C72B0", 3: "#C44E52"}
+JET_FLAVOUR_MAP = {0: 0, 4: 1, 5: 2, 15: 3}
 
-
-def plot_var (dataloader: DataLoader):
-    # all_labels = []
-    # all_values = []
-
-    # for batch_data, batch_labels in dataloader:
-    #     all_values.append(batch_data)
-    #     all_labels.append(batch_labels)
-
-    # # Concatena tutti i batch
-    # all_values = torch.cat(all_values).numpy()
-    # all_labels = torch.cat(all_labels).numpy()
-
-    # plt.hist(all_values.flatten(), bins=50)
-    # plt.show()
-
-    # Concatena direttamente durante l'iterazione
-    data = np.concatenate([batch[0].numpy() for batch in dataloader])
-
-    plt.figure(figsize=(10, 4))
-    plt.hist(data.flatten(), bins=50, edgecolor='black')
-    plt.title("Distribuzione dei dati")
-    plt.xlabel("Valore")
-    plt.ylabel("Frequenza")
-    plt.show()
+plt.rcParams.update({
+    "font.size":          11,
+    "axes.titlesize":     12,
+    "axes.labelsize":     11,
+    "axes.grid":          True,
+    "grid.alpha":         0.3,
+    "grid.linestyle":     "--",
+    "legend.frameon":     False,
+    "legend.fontsize":    9,
+    "figure.dpi":         150,
+    "savefig.bbox":       "tight",
+    "savefig.dpi":        150,
+})
 
 
 
+def _load_jet_data(
+    file_path: str,
+    indices: np.ndarray,
+    jet_vars: List[str],
+    jet_flavour: str,
+    jet_flavour_map: Dict[int, int],
+) -> Dict[str, np.ndarray]:
+    """
+    Load jet-level variables and labels from HDF5 for a subset of jets.
+
+    Args:
+        file_path       (str):          Path to HDF5 file.
+        indices         (np.ndarray):   Sorted jet indices to read.
+        jet_vars        (list):         Jet variable names.
+        jet_flavour     (str):          Name of the flavour field in HDF5.
+        jet_flavour_map (dict):         Raw label → class index mapping.
+
+    Returns:
+        dict: {var_name: np.ndarray} plus "label" key with class indices.
+    """
+    sorted_idx = np.sort(indices)
+    data: Dict[str, np.ndarray] = {}
+
+    with h5py.File(file_path, "r") as f:
+        jets = f["jets"][sorted_idx]
+        for var in jet_vars:
+            data[var] = jets[var].astype(np.float32)
+        raw_labels = jets[jet_flavour].astype(int)
+        data["label"] = np.array([jet_flavour_map.get(l, 0) for l in raw_labels], dtype=np.int32)
+
+    return data
 
 
-    
+def _load_track_data(
+    file_path: str,
+    indices: np.ndarray,
+    track_vars: List[str],
+    jet_flavour: str,
+    jet_flavour_map: Dict[int, int],
+    max_jets: int = 50_000,
+) -> Dict[str, np.ndarray]:
+    """
+    Load valid track-level variables from HDF5, flattened across jets.
+
+    Args:
+        file_path       (str):   Path to HDF5 file.
+        indices         (np.ndarray): Sorted jet indices.
+        track_vars      (list):  Track variable names.
+        jet_flavour     (str):   Flavour field name.
+        jet_flavour_map (dict):  Raw label → class index.
+        max_jets        (int):   Cap on jets to read (memory guard).
+
+    Returns:
+        dict: {var_name: np.ndarray} of valid tracks, plus "label" per track.
+    """
+    sorted_idx = np.sort(indices[:max_jets])
+    data_lists: Dict[str, list] = {v: [] for v in track_vars}
+    data_lists["label"] = []
+
+    with h5py.File(file_path, "r") as f:
+        jets_raw   = f["jets"][sorted_idx]
+        tracks_raw = f["tracks"][sorted_idx]
+        raw_labels = jets_raw[jet_flavour].astype(int)
+        labels     = np.array([jet_flavour_map.get(l, 0) for l in raw_labels], dtype=np.int32)
+
+        has_valid = "valid" in tracks_raw.dtype.names
+        for i in range(len(sorted_idx)):
+            jet_tracks = tracks_raw[i]
+            if has_valid:
+                valid_mask = jet_tracks["valid"].astype(bool)
+                jet_tracks = jet_tracks[valid_mask]
+            n = len(jet_tracks)
+            if n == 0:
+                continue
+            for var in track_vars:
+                data_lists[var].append(jet_tracks[var].astype(np.float32))
+            data_lists["label"].append(np.full(n, labels[i], dtype=np.int32))
+
+    return {k: np.concatenate(v) for k, v in data_lists.items()}
 
 
-# if __name__ == "__main__":
-#     import argparse
-#     parser = argparse.ArgumentParser(description="GN2 plot variables pipeline")
-#     parser.add_argument(
-#         "--config",
-#         type=str,
-#         default="src/trasformer_jet_tagging/configs/config.json",
-#         help="Path to the JSON configuration file.",
-#     )
-#     args = parser.parse_args()
-#     config_path = args.config
-#     main(config_path)
+# ---------------------------------------------------------------------------
+# Plot 1 - Jet variables
+# ---------------------------------------------------------------------------
+def plot_jet_variables(
+    jet_data: Dict[str, np.ndarray],
+    jet_vars: List[str],
+    output_dir: Path,
+) -> None:
+    """
+    Plot per-flavour distributions of jet-level variables.
+    pt is shown both raw (linear) and log-transformed.
+
+    Args:
+        jet_data    (dict):     Output of _load_jet_data().
+        jet_vars    (list):     Variable names to plot.
+        output_dir  (Path):     Directory where PNGs are saved.
+    """
+    labels  = jet_data["label"]
+    classes = sorted(FLAVOUR_LABELS.keys())
+
+    # build plot list: for pt add a log version
+    plot_list = []
+    for var in jet_vars:
+        plot_list.append((var, var, False))
+        if var == "pt":
+            plot_list.append(("log(pt)", "pt", True))
+
+    n_cols = 2
+    n_rows = (len(plot_list) + 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
+    axes = np.array(axes).reshape(-1)
+
+    for ax, (title, var, do_log) in zip(axes, plot_list):
+        values = jet_data[var].copy()
+        if do_log:
+            values = np.log(np.clip(values, 1e-6, None))
+
+        # determine range
+        q_lo, q_hi = np.min(values), np.max(values)
+        bins = np.linspace(q_lo, q_hi, 60)
+
+        for cls in classes:
+            mask = labels == cls
+            ax.hist(
+                values[mask],
+                bins=bins,
+                density=True,
+                histtype="step",
+                linewidth=1.5,
+                color=FLAVOUR_COLORS[cls],
+                label=FLAVOUR_LABELS[cls],
+            )
+
+        ax.set_title(title)
+        ax.set_xlabel(title)
+        ax.set_ylabel("density")
+        ax.set_yscale("log")
+        ax.legend()
+
+    # hide unused axes
+    for ax in axes[len(plot_list):]:
+        ax.set_visible(False)
+
+    fig.suptitle("Jet-level input variables", fontsize=14, y=1.01)
+    fig.tight_layout()
+    out = output_dir / "jet_variables.pdf"
+    fig.savefig(out)
+    plt.close(fig)
+    logger.info(f"Saved: {out}")
+
+
+# ---------------------------------------------------------------------------
+# Plot 2 - Track variables
+# ---------------------------------------------------------------------------
+def plot_track_variables(
+    track_data: Dict[str, np.ndarray],
+    track_vars: List[str],
+    output_dir: Path,
+    vars_per_page: int = 6,
+) -> None:
+    """
+    Plot per-flavour distributions of track-level variables.
+    Variables are split across multiple pages if needed.
+
+    Args:
+        track_data    (dict):   Output of _load_track_data().
+        track_vars    (list):   Variable names to plot.
+        output_dir    (Path):   Directory where PNGs are saved.
+        vars_per_page (int):    Max variables per figure (default 6).
+    """
+    labels  = track_data["label"]
+    classes = sorted(FLAVOUR_LABELS.keys())
+
+    for page, start in enumerate(range(0, len(track_vars), vars_per_page)):
+        page_vars = track_vars[start : start + vars_per_page]
+        n_cols = 3
+        n_rows = (len(page_vars) + n_cols - 1) // n_cols
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
+        axes = np.array(axes).reshape(-1)
+
+        for ax, var in zip(axes, page_vars):
+            values = track_data[var]
+            q_lo, q_hi = np.min(values), np.max(values)
+            bins = np.linspace(q_lo, q_hi, 60)
+
+            for cls in classes:
+                mask = labels == cls
+                ax.hist(
+                    values[mask],
+                    bins=bins,
+                    density=True,
+                    histtype="step",
+                    linewidth=1.5,
+                    color=FLAVOUR_COLORS[cls],
+                    label=FLAVOUR_LABELS[cls],
+                )
+
+            ax.set_title(var)
+            ax.set_xlabel(var)
+            ax.set_ylabel("density")
+            ax.set_yscale("log")
+            ax.legend()
+
+        for ax in axes[len(page_vars):]:
+            ax.set_visible(False)
+
+        fig.suptitle(f"Track-level input variables (page {page + 1})", fontsize=14, y=1.01)
+        fig.tight_layout()
+        out = output_dir / f"track_variables_page{page + 1}.pdf"
+        fig.savefig(out)
+        plt.close(fig)
+        logger.info(f"Saved: {out}")
+
+
+# ---------------------------------------------------------------------------
+# Plot 3 - Correlation matrices
+# ---------------------------------------------------------------------------
+def plot_correlations(
+    jet_data: Dict[str, np.ndarray],
+    track_data: Dict[str, np.ndarray],
+    jet_vars: List[str],
+    track_vars: List[str],
+    output_dir: Path,
+) -> None:
+    """
+    Plot Pearson correlation matrices for jet and track variables.
+
+    Args:
+        jet_data    (dict):   Output of _load_jet_data().
+        track_data  (dict):   Output of _load_track_data().
+        jet_vars    (list):   Jet variable names.
+        track_vars  (list):   Track variable names.
+        output_dir  (Path):   Directory where PNGs are saved.
+    """
+
+    def _corr_matrix(data_dict, vars_list):
+        mat = np.column_stack([data_dict[v].astype(np.float32) for v in vars_list])
+        # replace inf/nan with column mean
+        col_means = np.nanmean(mat, axis=0)
+        inds = np.where(~np.isfinite(mat))
+        mat[inds] = col_means[inds[1]]
+        return np.corrcoef(mat, rowvar=False)
+
+    def _draw_heatmap(ax, corr, labels, title):
+        im = ax.imshow(corr, vmin=-1, vmax=1, cmap="RdBu_r", aspect="auto")
+        ax.set_xticks(range(len(labels)))
+        ax.set_yticks(range(len(labels)))
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+        ax.set_yticklabels(labels, fontsize=8)
+        ax.set_title(title, fontsize=11)
+        # annotate cells
+        for i in range(len(labels)):
+            for j in range(len(labels)):
+                val = corr[i, j]
+                color = "white" if abs(val) > 0.6 else "black"
+                ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                        fontsize=6, color=color)
+        return im
+
+    # --- jet correlation ---
+    if len(jet_vars) >= 2:
+        # add log_pt as an extra column
+        jet_data_ext = dict(jet_data)
+        jet_data_ext["log(pt)"] = np.log(np.clip(jet_data["pt"], 1e-6, None))
+        jet_vars_ext = ["log(pt)"] + [v for v in jet_vars if v != "pt"]
+
+        corr_jet = _corr_matrix(jet_data_ext, jet_vars_ext)
+        fig, ax = plt.subplots(figsize=(max(5, len(jet_vars_ext)), max(4, len(jet_vars_ext))))
+        im = _draw_heatmap(ax, corr_jet, jet_vars_ext, "Jet variables - Correlation")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        fig.tight_layout()
+        out = output_dir / "correlation_jet.pdf"
+        fig.savefig(out)
+        plt.close(fig)
+        logger.info(f"Saved: {out}")
+
+    # --- track correlation ---
+    if len(track_vars) >= 2:
+        corr_track = _corr_matrix(track_data, track_vars)
+        n = len(track_vars)
+        fig, ax = plt.subplots(figsize=(max(8, n * 0.55), max(7, n * 0.55)))
+        im = _draw_heatmap(ax, corr_track, track_vars, "Track variables - Correlation")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        fig.tight_layout()
+        out = output_dir / "correlation_track.pdf"
+        fig.savefig(out)
+        plt.close(fig)
+        logger.info(f"Saved: {out}")
+
+
+
+
+def make_all_plots(
+    file_path: str,
+    jet_vars: List[str],
+    track_vars: List[str],
+    jet_flavour: str,
+    jet_flavour_map: Dict[int, int],
+    indices: np.ndarray,
+    output_dir: str = "outputs/plots",
+    n_jets_track: int = 50_000,
+) -> None:
+    """
+    Generate all plots and save them to output_dir.
+
+    Args:
+        file_path       (str):          Path to HDF5 file.
+        jet_vars        (list):         Jet variable names.
+        track_vars      (list):         Track variable names.
+        jet_flavour     (str):          Flavour field name in HDF5.
+        jet_flavour_map (dict):         Raw label → class index.
+        indices         (np.ndarray):   Jet indices to use (e.g. train_indices).
+        output_dir      (str):          Directory for output PNGs.
+        n_jets_track    (int):          Max jets for track plots (memory guard).
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Loading jet data for {len(indices):,} jets ...")
+    jet_data = _load_jet_data(file_path, indices, jet_vars, jet_flavour, jet_flavour_map)
+
+    logger.info(f"Loading track data (up to {n_jets_track:,} jets) ...")
+    track_data = _load_track_data(file_path, indices, track_vars, jet_flavour, jet_flavour_map, max_jets = n_jets_track)
+
+    logger.info("Plotting jet variables ...")
+    plot_jet_variables(jet_data, jet_vars, out)
+
+    logger.info("Plotting track variables ...")
+    plot_track_variables(track_data, track_vars, out)
+
+    logger.info("Plotting correlations ...")
+    plot_correlations(jet_data, track_data, jet_vars, track_vars, out)
+
+    logger.info(f"All plots saved to '{out}/'")
+
+
+
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    import src.trasformer_jet_tagging.utils as utils
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    parser = argparse.ArgumentParser(description="GN2 input/output variable plots")
+    parser.add_argument("--config",       type=str, default="configs/config.json")
+    parser.add_argument("--output-dir",   type=str, default="outputs/plots")
+    parser.add_argument("--n-jets",       type=int, default=200_000,
+                        help="Max jets for jet plots (default: 200000)")
+    parser.add_argument("--n-jets-track", type=int, default=50_000,
+                        help="Max jets for track plots (default: 50000)")
+    args = parser.parse_args()
+
+    config = utils.load_config_json(args.config)
+
+    file_path       = config["data"]["h5_path"]
+    jet_vars        = config["data"]["jet_features"]
+    track_vars      = config["data"]["track_features"]
+    jet_flavour     = config["data"]["label"]
+    jet_flavour_map = {int(k): v for k, v in config["data"]["label_map"].items()}
+    preprocess_dir  = Path(config["output"]["preprocess_dir"])
+
+    idx_path = preprocess_dir / "indices" / "train_indices.npy"
+    if not idx_path.exists():
+        logger.error(f"Index file not found: {idx_path}. Run preprocess.py first.")
+        sys.exit(1)
+
+    indices = np.sort(np.load(idx_path))
+    if args.n_jets < len(indices):
+        rng     = np.random.default_rng(seed=0)
+        indices = np.sort(rng.choice(indices, size=args.n_jets, replace=False))
+    logger.info(f"Using {len(indices):,} jets for plots.")
+
+    make_all_plots(
+        file_path       = file_path,
+        jet_vars        = jet_vars,
+        track_vars      = track_vars,
+        jet_flavour     = jet_flavour,
+        jet_flavour_map = jet_flavour_map,
+        indices         = indices,
+        output_dir      = args.output_dir,
+        n_jets_track    = args.n_jets_track,
+    )

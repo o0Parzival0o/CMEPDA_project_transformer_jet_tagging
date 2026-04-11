@@ -11,12 +11,11 @@ import time
 import numpy as np
 import torch
 
-import src.trasformer_jet_tagging.utils as utils
+from src.trasformer_jet_tagging import utils, plotting
 from src.trasformer_jet_tagging.dataset import GN2Dataset, build_dataloader
-# import src.trasformer_jet_tagging.plotting as plotting
 
 logging.basicConfig(
-    level  = logging.DEBUG,
+    level  = logging.INFO,
     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("GN2")
@@ -67,7 +66,7 @@ if __name__ == "__main__":
 
     if not all(p.exists() for p in artifacts_dir):
         logger.info("Preprocessing files not found. Running preprocess script ...")
-        import src.trasformer_jet_tagging.preprocess as preprocess
+        from src.trasformer_jet_tagging import preprocess
         preprocess.main(config_path=config_path)
 
     for path in artifacts_dir:
@@ -93,7 +92,7 @@ if __name__ == "__main__":
     with open(norm_path, "r") as f:
         norm_stats = {k: np.array(v) for k, v in json.load(f).items()}
 
-    logger.info(f"Train={len(train_indices)}, Val={len(val_indices)}, Test={len(test_indices)}")
+    logger.info(f"Train={len(train_indices):,}, Val={len(val_indices):,}, Test={len(test_indices):,}")
 
     # 2. initialize datasets and dataloaders
     common_kwargs = dict(
@@ -115,8 +114,6 @@ if __name__ == "__main__":
     val_dataset   = GN2Dataset(indices=val_indices,   **common_kwargs)
     test_dataset  = GN2Dataset(indices=test_indices,  **common_kwargs)
 
-    start = time.time()
-
     train_loader = build_dataloader(train_dataset, **loader_kwargs, shuffle=True)
     val_loader   = build_dataloader(val_dataset,   **loader_kwargs, shuffle=False)
     test_loader  = build_dataloader(test_dataset,  **loader_kwargs, shuffle=False)
@@ -125,6 +122,14 @@ if __name__ == "__main__":
     logger.debug(f"Jets shape:   {batch['jet_features'].shape}")
     logger.debug(f"Tracks shape: {batch['track_features'].shape}")
     logger.debug(f"Labels shape: {batch['label'].shape}")
-    logger.debug(f"Time elapsed: {time.time() - start}")
 
-    # plotting.plot_var(train_loader)
+    # plotting.make_all_plots(
+    #     file_path       = file_path,
+    #     jet_vars        = jet_vars,
+    #     track_vars      = track_vars,
+    #     jet_flavour     = label_vars,
+    #     jet_flavour_map = label_map,
+    #     indices         = train_indices,
+    #     output_dir      = "outputs/plots/",
+    #     n_jets_track    = int(len(train_indices)*0.1),
+    # )

@@ -208,3 +208,4 @@ __marimo__/
 
 # dataset
 dataset/
+outputs/plots/label_distribution.png

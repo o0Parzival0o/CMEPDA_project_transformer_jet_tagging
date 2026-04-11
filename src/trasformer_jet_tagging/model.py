@@ -73,6 +73,7 @@ class PreLNTransformerLayer(nn.Module):
             x                : (B, T, d_model)
             key_padding_mask : (B, T) — True = position to IGNORE (padding convention
                                used by nn.MultiheadAttention)
+
         Returns:
             (B, T, d_model)
         """
@@ -113,6 +114,7 @@ class AttentionPooling(nn.Module):
         Args:
             x            : (B, T, d_in)  — track embeddings from transformer
             padding_mask : (B, T)        — True = real track, False = padding
+        
         Returns:
             (B, d_out)   — pooled jet representation
         """

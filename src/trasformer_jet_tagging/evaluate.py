@@ -31,7 +31,7 @@ from torch.utils.data import DataLoader
 
 import src.trasformer_jet_tagging.utils as utils
 from src.trasformer_jet_tagging.dataset import GN2Dataset
-from model import GN2
+from src.trasformer_jet_tagging.model import GN2
 
 # ---------------------------------------------------------------------------
 # Logging
