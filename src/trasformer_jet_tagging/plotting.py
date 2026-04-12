@@ -23,28 +23,15 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")                       # non-interactive backend (no display needed)
 import matplotlib.pyplot as plt
+import mplhep as hep
 
+hep.style.use(hep.style.ATLAS)
 logger = logging.getLogger("GN2.plotting")
 
 
 FLAVOUR_LABELS = {0: "light", 1: "c-jet", 2: "b-jet", 3: "tau"}
 FLAVOUR_COLORS = {0: "#55A868", 1: "#DD8452", 2: "#4C72B0", 3: "#C44E52"}
 JET_FLAVOUR_MAP = {0: 0, 4: 1, 5: 2, 15: 3}
-
-plt.rcParams.update({
-    "font.size":          11,
-    "axes.titlesize":     12,
-    "axes.labelsize":     11,
-    "axes.grid":          True,
-    "grid.alpha":         0.3,
-    "grid.linestyle":     "--",
-    "legend.frameon":     False,
-    "legend.fontsize":    9,
-    "figure.dpi":         150,
-    "savefig.bbox":       "tight",
-    "savefig.dpi":        150,
-})
-
 
 
 def _load_jet_data(
@@ -151,16 +138,16 @@ def plot_jet_variables(
     # build plot list: for pt add a log version
     plot_list = []
     for var in jet_vars:
-        plot_list.append((var, var, False))
+        plot_list.append((var, False))
         if var == "pt":
-            plot_list.append(("log(pt)", "pt", True))
+            plot_list.append(("pt", True))
 
     n_cols = 2
     n_rows = (len(plot_list) + 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
     axes = np.array(axes).reshape(-1)
 
-    for ax, (title, var, do_log) in zip(axes, plot_list):
+    for ax, (var, do_log) in zip(axes, plot_list):
         values = jet_data[var].copy()
         if do_log:
             values = np.log(np.clip(values, 1e-6, None))
@@ -181,17 +168,21 @@ def plot_jet_variables(
                 label=FLAVOUR_LABELS[cls],
             )
 
-        ax.set_title(title)
-        ax.set_xlabel(title)
-        ax.set_ylabel("density")
+        ax.set_xlabel(var,loc='center',fontsize=15)
+        ax.set_ylabel("Entries")
         ax.set_yscale("log")
         ax.legend()
+        hep.atlas.label(
+                ax=ax,
+                data=True,
+                loc=1,
+                rlabel='$\sqrt{s}=$'+str(13.6)+r' TeV, $t\bar{t}$ simulation'
+               )
 
     # hide unused axes
     for ax in axes[len(plot_list):]:
         ax.set_visible(False)
 
-    fig.suptitle("Jet-level input variables", fontsize=14, y=1.01)
     fig.tight_layout()
     out = output_dir / "jet_variables.pdf"
     fig.savefig(out)
@@ -245,16 +236,20 @@ def plot_track_variables(
                     label=FLAVOUR_LABELS[cls],
                 )
 
-            ax.set_title(var)
-            ax.set_xlabel(var)
-            ax.set_ylabel("density")
+            ax.set_xlabel(var,loc='center',fontsize=15)
+            ax.set_ylabel("Entries")
             ax.set_yscale("log")
             ax.legend()
+            hep.atlas.label(
+                ax=ax,
+                data=True,
+                loc=1,
+                rlabel='$\sqrt{s}=$'+str(13.6)+r' TeV, $t\bar{t}$ simulation'
+               )
 
         for ax in axes[len(page_vars):]:
             ax.set_visible(False)
 
-        fig.suptitle(f"Track-level input variables (page {page + 1})", fontsize=14, y=1.01)
         fig.tight_layout()
         out = output_dir / f"track_variables_page{page + 1}.pdf"
         fig.savefig(out)

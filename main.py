@@ -1,5 +1,7 @@
 '''
 main.py
+=======
+Main script for the transformer jet tagging project.
 '''
 
 import argparse

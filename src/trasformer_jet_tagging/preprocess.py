@@ -17,9 +17,6 @@ Outputs (under the directory specified in config["output"]["preprocess_dir"]):
   │   ├── val_indices.npy
   │   └── test_indices.npy
   └── norm_stats.json
-
-Usage:
-    python preprocess.py --config configs/config.json
 """
 
 import json
@@ -40,9 +37,6 @@ logging.basicConfig(
 logger = logging.getLogger("GN2.preprocess")
 
 
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
 
 def save_indices(output_dir: Path, train: np.ndarray, val: np.ndarray, test: np.ndarray) -> None:
     """Save train / val / test index arrays as .npy files."""

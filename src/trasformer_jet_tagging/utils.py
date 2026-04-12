@@ -1,5 +1,7 @@
 """
 utils.py
+========
+Utility functions for the transformer jet tagging project.
 """
 
 import logging
