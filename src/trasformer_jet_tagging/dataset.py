@@ -49,7 +49,6 @@ Performance notes:
 """
 
 import logging
-from functools import partial
 from typing import Dict, List, Tuple, Optional
 
 import h5py
@@ -57,25 +56,10 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, BatchSampler, SequentialSampler, RandomSampler
 
+from src.trasformer_jet_tagging.constants import JET_VARS_DEFAULT, TRACK_VARS_DEFAULT, JET_FLAVOUR_LABEL, JET_FLAVOUR_MAP
+
 # logging configuration
 logger = logging.getLogger("GN2.dataset")
-
-JET_FLAVOUR_MAP = {0: 0, 4: 1, 5: 2, 15: 3}  # light, c, b, tau
-JET_FLAVOUR = 'HadronConeExclTruthLabelID'
-JET_VARS_DEFAULT = ['pt', 'eta']
-TRACK_VARS_DEFAULT = [
-    # tracks in the perigee repn
-    'qOverP', 'deta', 'dphi', 'd0', 'z0SinTheta',
-    # diagonal of the track cov matrix (first 3 els)
-    'qOverPUncertainty', 'thetaUncertainty', 'phiUncertainty',
-    # lifetime signed s(d0) and s(z0*sin(theta))
-    'lifetimeSignedD0Significance', 'lifetimeSignedZ0SinThetaSignificance',
-    # hit level variables
-    'numberOfPixelHits', 'numberOfSCTHits',
-    'numberOfInnermostPixelLayerHits', 'numberOfNextToInnermostPixelLayerHits',
-    'numberOfInnermostPixelLayerSharedHits', 'numberOfInnermostPixelLayerSplitHits',
-    'numberOfPixelSharedHits', 'numberOfPixelSplitHits', 'numberOfSCTSharedHits'
-]
 
 
 class GN2Dataset(Dataset):
@@ -105,7 +89,7 @@ class GN2Dataset(Dataset):
         n_tracks: int = 40,
         jet_vars: Optional[List[str]] = None,
         track_vars: Optional[List[str]] = None,
-        jet_flavour: Optional[str] = JET_FLAVOUR,
+        jet_flavour: Optional[str] = None,
         jet_flavour_map: Optional[Dict[int, int]] = None,
         norm_stats: Optional[Dict] = None
     ):
@@ -132,7 +116,7 @@ class GN2Dataset(Dataset):
         self.n_tracks        = n_tracks
         self.jet_vars        = jet_vars   if jet_vars   is not None else JET_VARS_DEFAULT
         self.track_vars      = track_vars if track_vars is not None else TRACK_VARS_DEFAULT
-        self.jet_flavour     = jet_flavour
+        self.jet_flavour     = jet_flavour if jet_flavour is not None else JET_FLAVOUR_LABEL
         self.jet_flavour_map = jet_flavour_map if jet_flavour_map is not None else JET_FLAVOUR_MAP
         self.norm_stats      = norm_stats
 
@@ -435,7 +419,7 @@ class BatchCollator:
 
 
 
-def build_dataloader(
+def GN2DataLoader(
     dataset: GN2Dataset,
     batch_size: int,
     shuffle: bool = False,
@@ -564,7 +548,7 @@ if __name__ == "__main__":
     # batch loader test
     import time
     logger.info("=== Batch loader test (BatchCollator) ===")
-    train_loader = build_dataloader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    train_loader = GN2DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     t0    = time.time()
     batch = next(iter(train_loader))
     dt    = time.time() - t0

@@ -38,24 +38,19 @@
     "split_seed": 42
   },
   "model": {
-    "n_jet_features": 2,
-    "n_track_features": 19,
-
-    "num_classes": 4,
-
     "initialiser_hidden_dim": 256,
     "initialiser_output_dim": 256,
     "transformer_n_layers": 4,
     "transformer_n_heads": 8,
     "transformer_embed_dim": 256,
-    "transformer_ffn_dim": 512,
+    "transformer_ff_dim": 512,
     "transformer_dropout": 0.0,
+    "pooling_dim": 128,
     "head_hidden_dims": [
       128,
       64,
       32
     ],
-    "head_dropout": 0.0,
     "activation": "relu"
   },
   "training": {
@@ -87,11 +82,12 @@
     ]
   },
   "output": {
-    "save_dir": "outputs/",
-    "save_norm_stats": "outputs/norm_stats.json",
     "preprocess_dir": "outputs/preprocess",
+    "save_plots": true,
+    "plots_dir": "outputs/plots",
     "save_best": true,
     "save_last": true,
+    "checkpoints_dir": "outputs/checkpoints",
     "plot_roc": true,
     "plot_rejection_vs_efficiency": true
   }

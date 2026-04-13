@@ -21,17 +21,14 @@ from typing import Dict, List
 import h5py
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")                       # non-interactive backend (no display needed)
+matplotlib.use("Agg")               # non-interactive backend (no display needed)
 import matplotlib.pyplot as plt
 import mplhep as hep
 
+from src.trasformer_jet_tagging.constants import FLAVOUR_LABELS, FLAVOUR_COLORS
+
 hep.style.use(hep.style.ATLAS)
 logger = logging.getLogger("GN2.plotting")
-
-
-FLAVOUR_LABELS = {0: "light", 1: "c-jet", 2: "b-jet", 3: "tau"}
-FLAVOUR_COLORS = {0: "#55A868", 1: "#DD8452", 2: "#4C72B0", 3: "#C44E52"}
-JET_FLAVOUR_MAP = {0: 0, 4: 1, 5: 2, 15: 3}
 
 
 def _load_jet_data(
@@ -52,7 +49,9 @@ def _load_jet_data(
         jet_flavour_map (dict):         Raw label → class index mapping.
 
     Returns:
-        dict: {var_name: np.ndarray} plus "label" key with class indices.
+        dict:
+            var_name (np.ndarray): shape (n_jets,) for each jet variable.
+            "label"  (np.ndarray): shape (n_jets,) integer class index for each jet.
     """
     sorted_idx = np.sort(indices)
     data: Dict[str, np.ndarray] = {}
@@ -87,7 +86,9 @@ def _load_track_data(
         max_jets        (int):   Cap on jets to read (memory guard).
 
     Returns:
-        dict: {var_name: np.ndarray} of valid tracks, plus "label" per track.
+        dict:
+            var_name (np.ndarray): shape (n_tracks,) for each track variable.
+            "label"  (np.ndarray): shape (n_tracks,) integer class index for each track's jet.
     """
     sorted_idx = np.sort(indices[:max_jets])
     data_lists: Dict[str, list] = {v: [] for v in track_vars}

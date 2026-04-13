@@ -59,7 +59,7 @@ scikit-learn>=1.8.0
 ```bash
 python3 -m venv venv
 source venv/bin/activate          # Linux/macOS
-# or: venv\Scripts\activate   # Windows
+# or: venv\Scripts\activate       # Windows
 ```
 
 ### 2. Install dependencies
@@ -67,19 +67,19 @@ source venv/bin/activate          # Linux/macOS
 **With GPU (CUDA 11.8):**
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu118
-pip install numpy h5py scikit-learn matplotlib pyyaml
+pip install numpy h5py scikit-learn matplotlib
 ```
 
 **With GPU (CUDA 12.1):**
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu121
-pip install numpy h5py scikit-learn matplotlib pyyaml
+pip install numpy h5py scikit-learn matplotlib
 ```
 
 **Only CPU (slow):**
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install numpy h5py scikit-learn matplotlib pyyaml
+pip install numpy h5py scikit-learn matplotlib
 ```
 
 ### 3. Put the HDF5 file in `data/` folder
@@ -97,7 +97,7 @@ The expected structure of the HDF5 file is:
 ```
 
 Update the file name in
-`configs/default.yaml`.
+`configs/config.json`.
 
 ---
 
@@ -109,24 +109,12 @@ Update the file name in
 python main.py
 ```
 
-Usa automaticamente `configs/default.yaml` e salva tutto in `outputs/`.
+Usa automaticamente `configs/config.json` e salva tutto in `outputs/`.
 
 ### Specificare file dati e output
 
 ```bash
-python main.py --data data/miofile.h5 --output-dir outputs/esperimento1/
-```
-
-### Usare un config personalizzato
-
-```bash
-python main.py --config configs/mio_config.yaml
-```
-
-### Solo valutazione (su checkpoint esistente)
-
-```bash
-python main.py --eval-only --checkpoint outputs/best_model.pt
+python main.py --config configs/config.json
 ```
 
 ---

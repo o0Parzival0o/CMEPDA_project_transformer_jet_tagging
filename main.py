@@ -14,7 +14,9 @@ import numpy as np
 import torch
 
 from src.trasformer_jet_tagging import utils, plotting
-from src.trasformer_jet_tagging.dataset import GN2Dataset, build_dataloader
+from src.trasformer_jet_tagging.dataset import GN2Dataset, GN2DataLoader
+from src.trasformer_jet_tagging.model import GN2
+from src.trasformer_jet_tagging.train import train
 
 logging.basicConfig(
     level  = logging.INFO,
@@ -116,22 +118,49 @@ if __name__ == "__main__":
     val_dataset   = GN2Dataset(indices=val_indices,   **common_kwargs)
     test_dataset  = GN2Dataset(indices=test_indices,  **common_kwargs)
 
-    train_loader = build_dataloader(train_dataset, **loader_kwargs, shuffle=True)
-    val_loader   = build_dataloader(val_dataset,   **loader_kwargs, shuffle=False)
-    test_loader  = build_dataloader(test_dataset,  **loader_kwargs, shuffle=False)
+    train_loader = GN2DataLoader(train_dataset, **loader_kwargs, shuffle=True)
+    val_loader   = GN2DataLoader(val_dataset,   **loader_kwargs, shuffle=False)
+    test_loader  = GN2DataLoader(test_dataset,  **loader_kwargs, shuffle=False)
 
     batch = next(iter(train_loader))
     logger.debug(f"Jets shape:   {batch['jet_features'].shape}")
     logger.debug(f"Tracks shape: {batch['track_features'].shape}")
     logger.debug(f"Labels shape: {batch['label'].shape}")
 
-    # plotting.make_all_plots(
-    #     file_path       = file_path,
-    #     jet_vars        = jet_vars,
-    #     track_vars      = track_vars,
-    #     jet_flavour     = label_vars,
-    #     jet_flavour_map = label_map,
-    #     indices         = train_indices,
-    #     output_dir      = "outputs/plots/",
-    #     n_jets_track    = int(len(train_indices)*0.1),
-    # )
+    if config["output"].get("save_plots", False):
+        plotting.make_all_plots(
+            file_path       = file_path,
+            jet_vars        = jet_vars,
+            track_vars      = track_vars,
+            jet_flavour     = label_vars,
+            jet_flavour_map = label_map,
+            indices         = train_indices,
+            output_dir      = config["output"].get("plot_dir", "outputs/plots"),
+            n_jets_track    = int(len(train_indices)*0.1),
+        )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_config = config.get("model", {})
+    GN2_model = GN2(
+        n_jet_vars       = len(jet_vars),
+        n_track_vars     = len(track_vars),
+        n_classes        = model_config.get(len(label_map), None),
+        init_hidden_dim  = model_config.get("initialiser_hidden_dim", None),
+        init_output_dim  = model_config.get("initialiser_output_dim", None),
+        embed_dim        = model_config.get("transformer_embed_dim", None),
+        n_heads          = model_config.get("transformer_n_heads", None),
+        n_layers         = model_config.get("transformer_n_layers", None),
+        ff_dim           = model_config.get("transformer_ff_dim", None),
+        pool_dim         = model_config.get("pooling_dim", None),
+        dropout          = model_config.get("transformer_dropout", None),
+        head_hidden_dims = model_config.get("head_hidden_dims", None),
+        activation       = model_config.get("activation", None),
+    ).to(device)
+
+    GN2_model = train(
+        model        = GN2_model,
+        train_loader = train_loader,
+        val_loader   = val_loader,
+        config       = config,
+        output_dir   = config["output"].get("checkpoints_dir", "outputs/checkpoints"),
+        device       = device)
