@@ -127,7 +127,11 @@ class TransformerLayer(nn.Module):
         # self-attention with pre-norm
         residual = inputs           # save inputs for skip connection
         x = self.norm1(inputs)
-        x, _ = self.attn(x, x, x, key_padding_mask=~key_padding_mask)
+        # evita che jet con zero tracce valide producano nan nell'attention
+        safe_mask = key_padding_mask.clone()
+        all_empty = ~key_padding_mask.any(dim=-1)   # (B,) jets senza tracce
+        safe_mask[all_empty, 0] = True              # forza almeno una posizione "valida"
+        x, _ = self.attn(x, x, x, key_padding_mask=~safe_mask)
         x = self.drop(x) + residual
 
         # feed-forward with pre-norm
@@ -182,7 +186,10 @@ class AttentionPooling(nn.Module):
         scores = self.query(x).squeeze(-1)                  # (B, T), attention scores for each track
         if padding_mask is not None:
             scores = scores.masked_fill(~padding_mask, float('-inf'))       # mask padded positions to -inf so that softmax gives zero weight to ignored tracks
-        weights = torch.softmax(scores, dim=-1)             # (B, T)
+        # se un jet ha tutte le tracce mascherate, softmax dà nan → fallback a uniform
+        all_masked = (~padding_mask).all(dim=-1, keepdim=True)  # (B, 1)
+        scores = scores.masked_fill(all_masked.expand_as(scores), 0.0)  # uniform fallback
+        weights = torch.softmax(scores, dim=-1)
         pooled  = (weights.unsqueeze(-1) * x).sum(dim=1)    # (B, d_in)
         return self.proj_out(pooled)                        # (B, d_out)
 

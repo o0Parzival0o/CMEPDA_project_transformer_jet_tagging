@@ -12,7 +12,7 @@ import numpy as np
 import h5py
 from sklearn.preprocessing import StandardScaler
 
-from src.trasformer_jet_tagging.constants import JET_VARS_DEFAULT, TRACK_VARS_DEFAULT, JET_FLAVOUR_LABEL, JET_FLAVOUR_MAP
+from src.trasformer_jet_tagging.constants import JET_VARS_DEFAULT, TRACK_VARS_DEFAULT
 
 logger = logging.getLogger("GN2.utils")
 

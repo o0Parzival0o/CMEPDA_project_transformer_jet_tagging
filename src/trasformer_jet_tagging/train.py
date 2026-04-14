@@ -25,6 +25,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from src.trasformer_jet_tagging.model import GN2
+from src.trasformer_jet_tagging.dataset import GN2DataLoader
 
 logger = logging.getLogger("GN2.train")
 
@@ -44,24 +45,22 @@ class GN2Loss(nn.Module):
         Initialize thr GN2 loss.
         """
         super().__init__()
-        self.ce_jet = nn.CrossEntropyLoss()
+        self.ce_jet = nn.CrossEntropyLoss(ignore_index = -1)
 
     def forward(self, outputs: dict, labels: dict) -> dict:
         """
-        Forward pass through the GN2 loss.
+        Forward pass to compute the loss.
 
         Args:
-            outputs:
-                'jet_outputs': (B, n_classes)
-            labels:
-                'jet_label': (B,) long
-
-        Returns:
-            dict with total and jet loss.
+            outputs (dict): model outputs with keys:
+                "jet_outputs" (torch.Tensor, shape (batch_size, n_classes)): raw logits for jet classification.
+            labels (dict): ground truth labels with keys:
+                "jet_label" (torch.Tensor, shape (batch_size,)): integer class labels for each jet.
         """
         loss_jet = self.ce_jet(outputs["jet_outputs"], labels["jet_label"])
 
         return {
+            "total": loss_jet,
             "jet": loss_jet,
         }
 
@@ -131,77 +130,67 @@ def lr_scheduler(
 # Single epoch
 # ---------------------------------------------------------------------------
 def run_epoch(
-    model    : GN2,
-    loader   : DataLoader,
-    criterion: GN2Loss,
+    model: GN2,
+    loader: DataLoader,
+    loss: GN2Loss,
     optimiser: AdamW,
     scheduler: LambdaLR,
-    device   : torch.device,
-    is_train : bool,
-    scaler   : torch.cuda.amp.GradScaler = None,
+    device: torch.device,
+    is_train: bool,
+    scaler: torch.amp.GradScaler = None,
 ) -> dict:
     """
     Run one full epoch.
 
     Args:
-        model     : GN2 instance.
-        loader    : train or val DataLoader.
-        criterion : GN2Loss instance.
-        optimiser : AdamW instance (unused during validation).
-        scheduler : LambdaLR instance (stepped only during training).
-        device    : torch device.
-        is_train  : True for training, False for validation.
-        scaler    : GradScaler for AMP (None = disabled).
+        model     (GN2): GN2 model instance.
+        loader    (DataLoader): train or val DataLoader.
+        criterion (GN2Loss): GN2Loss instance.
+        optimiser (AdamW): AdamW instance (unused during validation).
+        scheduler (LambdaLR): LambdaLR instance (stepped only during training).
+        device    (torch.device): Device to move tensors to.
+        is_train  (bool): True for training, False for validation.
+        scaler    (torch.amp.GradScaler): optional GradScaler for mixed precision training (default: None).
 
     Returns:
-        dict with averaged loss 'jet'.
+        dict with averaged loss.
     """
     model.train() if is_train else model.eval()
 
-    totals    = {"jet": 0.0}
+    totals    = {"total": 0.0, "jet": 0.0}
     n_batches = 0
     ctx       = torch.enable_grad if is_train else torch.no_grad
 
     with ctx():
         for batch in loader:
-            jet_f = batch["jet_features"].to(device)
-            trk_f = batch["track_features"].to(device)
-            mask  = batch["mask"].to(device)
+            jet_vars   = batch["jet_features"].to(device)
+            track_vars = batch["track_features"].to(device)
+            mask    = batch["mask"].to(device)
 
-            labels = {
-                "jet_label": batch["label"].to(device),
-                "origin_label": batch.get(
-                    "origin_label",
-                    torch.full((jet_f.size(0), trk_f.size(1)), -1, dtype=torch.long)
-                ).to(device),
-                "vertex_label": batch.get(
-                    "vertex_label",
-                    torch.full((jet_f.size(0), trk_f.size(1), trk_f.size(1)), -1, dtype=torch.long)
-                ).to(device),
-            }
+            labels = {"jet_label": batch["label"].to(device)}
 
             if is_train and scaler is not None:
                 with torch.amp.autocast(device_type=device.type):
-                    outputs = model(jet_f, trk_f, mask)
-                    losses  = criterion(outputs, labels, mask)
+                    outputs = model(jet_vars, track_vars, mask)
+                    losses  = loss(outputs, labels)
                 optimiser.zero_grad()
-                scaler.scale(losses["jet"]).backward()
+                scaler.scale(losses["total"]).backward()
                 scaler.unscale_(optimiser)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimiser)
                 scaler.update()
                 scheduler.step()
             elif is_train:
-                outputs = model(jet_f, trk_f, mask)
-                losses  = criterion(outputs, labels)
+                outputs = model(jet_vars, track_vars, mask)
+                losses  = loss(outputs, labels)
                 optimiser.zero_grad()
-                losses["jet"].backward()
+                losses["total"].backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimiser.step()
                 scheduler.step()
             else:
-                outputs = model(jet_f, trk_f, mask)
-                losses  = criterion(outputs, labels)
+                outputs = model(jet_vars, track_vars, mask)
+                losses  = loss(outputs, labels)
 
             for k in totals:
                 totals[k] += losses[k].item()
@@ -214,35 +203,32 @@ def run_epoch(
 # Full training loop
 # ---------------------------------------------------------------------------
 def train(
-    model       : GN2,
+    model: GN2,
     train_loader: DataLoader,
-    val_loader  : DataLoader,
-    config      : dict,
-    output_dir  : Path,
-    device      : torch.device,
+    val_loader: DataLoader,
+    config: dict,
+    output_dir: Path,
+    device: torch.device,
 ) -> GN2:
     """
-    Full training loop. Designed to be called from main.py.
-
-    Handles loss, optimiser, scheduler, AMP, TensorBoard logging,
-    and best-checkpoint saving.
+    Full training loop.
 
     Args:
-        model        : GN2 instance (already on device).
-        train_loader : DataLoader for training set.
-        val_loader   : DataLoader for validation set.
-        config       : full config dict (sections: 'training', 'output').
-        output_dir   : directory where checkpoints and TB runs are saved.
-        device       : torch device.
+        model        (GN2): GN2 instance (already on device).
+        train_loader (DataLoader): DataLoader for training set.
+        val_loader   (DataLoader): DataLoader for validation set.
+        config       (dict): full config dict.
+        output_dir   (Path): directory where checkpoints and TB runs are saved.
+        device       (torch.device): torch device.
 
     Returns:
-        GN2 model loaded with the best checkpoint weights.
+        model (GN2): GN2 model loaded with the best checkpoint weights.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     training_config = config.get("training", {})
 
-    criterion = GN2Loss()
+    loss = GN2Loss()
 
     lr        = training_config.get("lr_peak", 5.0e-04)
     wd        = training_config.get("weight_decay", 1.0e-05)
@@ -250,29 +236,33 @@ def train(
 
     n_epochs      = training_config.get("max_epochs", 20)
     n_total_steps = n_epochs * len(train_loader)
-    lr_decay  = lr_scheduler(
+    lr_decay  = lr_scheduler(                           # TODO: riveredere parametri del lr
         optimiser,
         n_total_steps,
         warmup_frac = training_config.get("warmup_frac", 0.01),
+        lr_initial = training_config.get("lr_initial", 1.0e-07),
+        lr_peak = lr,
+        lr_final = training_config.get("lr_final", 1.0e-05),
     )
 
     scaler = torch.amp.GradScaler() if device.type == "cuda" else None
     writer = SummaryWriter(log_dir=str(output_dir / "runs"))
 
-    best_val_loss = float("inf")
-    ckpt_path     = output_dir / "best_model.pt"
+    best_val_loss   = float("inf")
+    checkpoint_path = output_dir / "best_model.pt"
 
     for epoch in range(1, n_epochs + 1):
-        train_losses = run_epoch(model, train_loader, criterion, optimiser,
+        train_losses = run_epoch(model, train_loader, loss, optimiser,
                                  lr_decay, device, is_train=True,  scaler=scaler)
-        val_losses   = run_epoch(model, val_loader,   criterion, optimiser,
+        val_losses   = run_epoch(model, val_loader,   loss, optimiser,
                                  lr_decay, device, is_train=False)
 
         lr_now = lr_decay.get_last_lr()[0]
         logger.info(
             f"Epoch {epoch:3d}/{n_epochs} | "
-            f"(jet={train_losses['jet']:.4f} | "
-            f"val={val_losses['jet']:.4f} | "
+            f"train loss={train_losses['total']:.4f} | "
+            f"(jet={train_losses['jet']:.4f}) | "
+            f"val={val_losses['total']:.4f} | "
             f"lr={lr_now:.2e}"
         )
 
@@ -282,22 +272,22 @@ def train(
             writer.add_scalar(f"val/{k}", v, epoch)
         writer.add_scalar("lr", lr_now, epoch)
 
-        if val_losses["jet"] < best_val_loss:
-            best_val_loss = val_losses["jet"]
+        if val_losses["total"] < best_val_loss:
+            best_val_loss = val_losses["total"]
             torch.save({
                 "epoch"      : epoch,
                 "model_state": model.state_dict(),
                 "optim_state": optimiser.state_dict(),
                 "val_loss"   : best_val_loss,
                 "config"     : config,
-            }, ckpt_path)
-            logger.info(f"  ↳ New best val_loss={best_val_loss:.4f} — saved to {ckpt_path}")
+            }, checkpoint_path)
+            logger.info(f"    New best val_loss={best_val_loss:.4f} - saved to {checkpoint_path}")
 
     writer.close()
     logger.info("Training complete.")
 
     # reload best weights before returning
-    model.load_state_dict(torch.load(ckpt_path, map_location=device)["model_state"])
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device)["model_state"])
     return model
 
 
@@ -307,20 +297,20 @@ if __name__ == "__main__":
     import json
 
     import src.trasformer_jet_tagging.utils as utils
-    from src.trasformer_jet_tagging.dataset import GN2Dataset, GN2DataLoader
+    from src.trasformer_jet_tagging.dataset import GN2Dataset
 
     logging.basicConfig(
-        level  = logging.INFO,
+        level  = logging.DEBUG,
         format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
     parser = argparse.ArgumentParser(description="GN2 training (standalone debug)")
-    parser.add_argument("--config",      type=str,   default="configs/config.json")
-    parser.add_argument("--debug-frac",  type=float, default=0.05,
+    parser.add_argument("--config",     type=str,   default="configs/config.json")
+    parser.add_argument("--debug-frac", type=float, default=0.05,
                         help="Fraction of data to use for debug (default: 5%%)")
-    parser.add_argument("--epochs",      type=int,   default=None)
-    parser.add_argument("--lr",          type=float, default=None)
-    parser.add_argument("--batch-size",  type=int,   default=None)
+    parser.add_argument("--epochs",     type=int,   default=None)
+    parser.add_argument("--lr",         type=float, default=None)
+    parser.add_argument("--batch-size", type=int,   default=None)
     args = parser.parse_args()
 
 
@@ -346,7 +336,7 @@ if __name__ == "__main__":
         rng           = np.random.default_rng(seed=42)
         train_indices = rng.choice(train_indices, size=int(len(train_indices) * args.debug_frac), replace=False)
         val_indices   = rng.choice(val_indices,   size=int(len(val_indices)   * args.debug_frac), replace=False)
-        logger.info(f"Debug mode: {args.debug_frac:.0%} of data — "
+        logger.info(f"Debug mode: {args.debug_frac:.0%} of data - "
                     f"train={len(train_indices):,}  val={len(val_indices):,}")
 
     train_indices = np.sort(train_indices)
@@ -362,9 +352,9 @@ if __name__ == "__main__":
     label_map  = {int(k): v for k, v in config["data"]["label_map"].items()}
     max_tracks = config["data"].get("max_tracks", 40)
 
-    training_cfg = config.get("training", {})
-    batch_size   = training_cfg.get("batch_size", 1024)
-    num_workers  = training_cfg.get("num_workers", 0)
+    training_config = config.get("training", {})
+    batch_size      = training_config.get("batch_size", 1024)
+    num_workers     = training_config.get("num_workers", 0)
 
     common_kwargs = dict(
         file_path       = file_path,
@@ -386,7 +376,7 @@ if __name__ == "__main__":
     val_loader   = GN2DataLoader(GN2Dataset(indices=val_indices,   **common_kwargs),
                                     **loader_kwargs, shuffle=False)
 
-    device    = torch.device("cuda")               # TODO torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_config = config.get("model", {})
     model = GN2(
         n_jet_vars       = len(jet_vars),
@@ -404,7 +394,6 @@ if __name__ == "__main__":
         activation       = model_config.get("activation", None),
     ).to(device)
 
-    # CLI overrides (only relevant for debug runs)
     if args.epochs     is not None: config["training"]["epochs"]     = args.epochs
     if args.lr         is not None: config["training"]["lr"]         = args.lr
     if args.batch_size is not None: config["training"]["batch_size"] = args.batch_size

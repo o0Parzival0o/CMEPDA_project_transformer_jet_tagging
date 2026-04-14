@@ -1,7 +1,7 @@
 """
 dataset.py
 ==========
-High-performance GN2 data pipeline for HDF5 datasets. 
+High-performance GN2 data pipeline for HDF5 datasets.
 Optimized for large-scale Jet Flavour Tagging at ATLAS.
 
 HDF5 Structure:
@@ -10,13 +10,14 @@ HDF5 Structure:
   /eventwise     - event-level metadata.
   /truth_hadrons - simulation truth for hadron labeling and performance studies.
 
-The pipeline utilises "lazy loading" via h5py to handle datasets that exceed 
+The pipeline utilises "lazy loading" via h5py to handle datasets that exceed
 available RAM, using NumPy vectorization for high-speed feature extraction.
 
 Pipeline Workflow:
 
 1. Data Loading:
-   Batch extraction of jet and track features using a custom collate_fn that reads an entire batch in a single HDF5 call.
+   Batch extraction of jet and track features using a custom collate_fn that reads
+   an entire batch in a single HDF5 call.
 
 2. Track Quality Filtering:
    Active filtering of track candidates using the "valid" boolean flag before processing.
@@ -40,9 +41,13 @@ Performance notes:
     read per batch, reducing I/O overhead by orders of magnitude.
   - num_workers should be 0 when using BatchCollator (the collate_fn
     already parallelises I/O at the batch level via sorted slice reads).
+  - _get_handler() is thread-safe via a per-instance Lock, but h5py file
+    handles are NOT shared across processes: each DataLoader worker opens
+    its own handle automatically on first access.
 """
 
 import logging
+import threading
 from typing import Dict, List, Tuple, Optional
 
 import h5py
@@ -50,9 +55,13 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, BatchSampler, SequentialSampler, RandomSampler
 
-from src.trasformer_jet_tagging.constants import JET_VARS_DEFAULT, TRACK_VARS_DEFAULT, JET_FLAVOUR_LABEL, JET_FLAVOUR_MAP
+from src.trasformer_jet_tagging.constants import (
+    JET_VARS_DEFAULT,
+    TRACK_VARS_DEFAULT,
+    JET_FLAVOUR_LABEL,
+    JET_FLAVOUR_MAP,
+)
 
-# logging configuration
 logger = logging.getLogger("GN2.dataset")
 
 
@@ -68,12 +77,12 @@ class GN2Dataset(Dataset):
     Attributes:
         file_path (str): path of .h5 file.
         indices (np.ndarray): sorted indices of jets to include in the dataset.
-        n_tracks (int, optional): maximum number of tracks for each jet (padding/cropping).
-        jet_vars (list, optional): list of jet variables.
-        track_vars (list, optional): list of track variables.
-        jet_flavour (str, optional): name of the jet flavour variable in the HDF5 file.
-        jet_flavour_map (dict, optional): mapping from raw hadron labels to target classes.
-        norm_stats (dict, optional): normalization statistics for jet and track features.
+        n_tracks (int): maximum number of tracks for each jet (padding/cropping).
+        jet_vars (list): list of jet variables.
+        track_vars (list): list of track variables.
+        jet_flavour (str): name of the jet flavour variable in the HDF5 file.
+        jet_flavour_map (dict): mapping from raw hadron labels to target classes.
+        norm_stats (dict or None): normalization statistics for jet and track features.
     """
 
     def __init__(
@@ -85,7 +94,7 @@ class GN2Dataset(Dataset):
         track_vars: Optional[List[str]] = None,
         jet_flavour: Optional[str] = None,
         jet_flavour_map: Optional[Dict[int, int]] = None,
-        norm_stats: Optional[Dict] = None
+        norm_stats: Optional[Dict] = None,
     ):
         """
         Initialize the dataset.
@@ -103,10 +112,10 @@ class GN2Dataset(Dataset):
 
         Raises:
             FileNotFoundError: if the specified HDF5 file does not exist.
-            KeyError: if the expected datasets ("jets", "tracks") are not found.
+            KeyError: if the expected datasets ("jets", "tracks") are not found in the file.
         """
         self.file_path       = file_path
-        self.indices         = indices
+        self.indices         = np.asarray(indices)
         self.n_tracks        = n_tracks
         self.jet_vars        = jet_vars        if jet_vars        is not None else JET_VARS_DEFAULT
         self.track_vars      = track_vars      if track_vars      is not None else TRACK_VARS_DEFAULT
@@ -117,19 +126,20 @@ class GN2Dataset(Dataset):
         if norm_stats is None:
             logger.warning("No norm_stats provided - raw values will be used.")
 
-        # warning if indices are not sorted (performance degradation)
-        if len(indices) > 1 and not np.all(indices[:-1] <= indices[1:]):
-            logger.warning("GN2Dataset: indices are NOT sorted.")
+        # warn if indices are not sorted
+        if len(self.indices) > 1 and not np.all(self.indices[:-1] <= self.indices[1:]):
+            logger.warning("GN2Dataset: indices are NOT sorted. Performance may degrade.")
 
-        # h5py file handler: None until opened lazily in _get_handler()
-        self.handler = None
+        # h5py file handler: opened lazily in _get_handler(), one per thread
+        self._handler: Optional[h5py.File] = None
+        self._handler_lock = threading.Lock()
 
         # initial check
         try:
             with h5py.File(self.file_path, "r") as f:
                 self.n_jets = len(f["jets"])
                 logger.info(f"Success loading {file_path}: {self.n_jets:,} jets found.")
-                logger.debug(f'Original shape tracks": {f["tracks"].shape}')
+                logger.debug(f"Original shape tracks: {f["tracks"].shape}")
         except (FileNotFoundError, KeyError) as e:
             logger.error(f"Error loading file {file_path}: {e}")
             raise
@@ -139,26 +149,29 @@ class GN2Dataset(Dataset):
         Manage the h5py file handler for multiprocessing.
 
         Returns:
-            (h5py.File): open h5py file object.
+            (h5py.File): open file object in read mode.
 
-        Raise:
-            OSError: TODO
+        Raises:
+            OSError: if the file cannot be opened.
         """
-        if self.handler is None:
-            try:
-                self.handler = h5py.File(self.file_path, "r", swmr=True)        # Single Writer Multiple Reader: allows multiple readers (for num_workers > 0)
-            except OSError:
-                logger.warning("SWMR mode not supported on this filesystem. Standard read.")
-                self.handler = h5py.File(self.file_path, "r")
-        return self.handler
+        if self._handler is None:
+            with self._handler_lock:
+                # double-checked locking: re-test after acquiring the lock
+                if self._handler is None:
+                    try:
+                        self._handler = h5py.File(self.file_path, "r", swmr=True)        # Single Writer Multiple Reader: allows multiple readers (for num_workers > 0)
+                    except OSError:
+                        logger.warning("SWMR mode not supported on this filesystem. Standard read.")
+                        self._handler = h5py.File(self.file_path, "r")
+        return self._handler
 
     def _process_jet(self, jet_pt: np.ndarray, jet_eta: np.ndarray) -> np.ndarray:
         """
         Apply log-transform to pT and optional Z-score normalization.
 
         Args:
-            jet_pt  (np.ndarray): raw jet transverse momentum in MeV.
-            jet_eta (np.ndarray): raw jet pseudorapidity.
+            jet_pt  (np.ndarray): shape (n,), raw jet transverse momentum in MeV.
+            jet_eta (np.ndarray): shape (n,), raw jet pseudorapidity.
 
         Returns:
             (np.ndarray): shape (n, 2), normalized [log_pt, eta].
@@ -168,9 +181,9 @@ class GN2Dataset(Dataset):
 
         if (
             self.norm_stats is not None
-            and "jet_mu" in self.norm_stats
+            and "jet_mu"    in self.norm_stats
             and "jet_sigma" in self.norm_stats
-            and len(self.norm_stats["jet_mu"]) >= 2
+            and len(self.norm_stats["jet_mu"])    >= 2
             and len(self.norm_stats["jet_sigma"]) >= 2
         ):
             jet_pt_log = (jet_pt_log - self.norm_stats["jet_mu"][0]) / self.norm_stats["jet_sigma"][0]
@@ -180,44 +193,44 @@ class GN2Dataset(Dataset):
 
     def _process_tracks(self, tracks_raw: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Filter valid tracks, crop/pad to n_tracks and normalize.
+        Filter valid tracks, crop/pad to n_tracks, and normalize.
 
         Args:
             tracks_raw (np.ndarray): shape (max_tracks_in_file,), structured array of all tracks for one jet.
 
         Returns:
             track_features (np.ndarray): shape (n_tracks, n_track_vars), float32.
-            padding_mask   (np.ndarray): shape (n_tracks,), bool: True = real track.
+            padding_mask   (np.ndarray): shape (n_tracks,), bool; True = real track.
         """
         track_features = np.zeros((self.n_tracks, len(self.track_vars)), dtype=np.float32)
         padding_mask   = np.zeros(self.n_tracks, dtype=bool)
 
         # slice only the first n_tracks valid entries.
         if "valid" in tracks_raw.dtype.names:
-            valid_mask          = tracks_raw["valid"].astype(bool)
-            valid_track_indices = np.where(valid_mask)[0][:self.n_tracks]
+            valid_idx = np.where(tracks_raw["valid"].astype(bool))[0][:self.n_tracks]
         else:
-            valid_track_indices = np.arange(min(len(tracks_raw), self.n_tracks))
+            valid_idx = np.arange(min(len(tracks_raw), self.n_tracks))
 
-        n_to_read = len(valid_track_indices)
-        if n_to_read > 0:
-            track_block = tracks_raw[valid_track_indices]   # only the needed rows
+        n_valid = len(valid_idx)
+        if n_valid > 0:
+            track_block = tracks_raw[valid_idx]
             for i, var in enumerate(self.track_vars):
-                raw_values = track_block[var].astype(np.float32)
-                if (self.norm_stats is not None and "track_mu" in self.norm_stats and "track_sigma" in self.norm_stats):
-                    mu    = self.norm_stats["track_mu"][i]
-                    sigma = self.norm_stats["track_sigma"][i]
-                    track_features[:n_to_read, i] = (raw_values - mu) / sigma
-                else:
-                    track_features[:n_to_read, i] = raw_values
-            padding_mask[:n_to_read] = True
+                vals = track_block[var].astype(np.float32)
+                if (
+                    self.norm_stats is not None
+                    and "track_mu"    in self.norm_stats
+                    and "track_sigma" in self.norm_stats
+                ):
+                    vals = (vals - self.norm_stats["track_mu"][i]) / self.norm_stats["track_sigma"][i]
+                track_features[:n_valid, i] = vals
+            padding_mask[:n_valid] = True
 
         return track_features, padding_mask
 
     @property
     def shape(self) -> Tuple[int, int, int]:
         """
-        Returns the shape of the dataset.
+        Shape of the dataset.
 
         Returns:
             (tuple[int, int, int]): shape (n_jets, n_tracks, n_track_features).
@@ -254,36 +267,40 @@ class GN2Dataset(Dataset):
         f        = self._get_handler()
         real_idx = self.indices[idx]    # maps the dataset index to the actual jet index in the file
 
-        # 1. Loading Jet Features and normalization
+        # 1. jet features
         jet_data  = f["jets"][real_idx]
-        jet_feats = np.array([jet_data["pt"], jet_data["eta"]])
-        jet_feats = self._process_jet(np.array([jet_data["pt"]]), np.array([jet_data["eta"]]))[0]
+        jet_feats = self._process_jet(
+            np.array([jet_data["pt"]]),
+            np.array([jet_data["eta"]]),
+        )[0]
 
-        # 2. Loading Tracks with "valid" Filter
+        # 2. track features
         tracks_raw = f["tracks"][real_idx]
-        track_feats, padding_mask = self._process_tracks(tracks_raw)
+        track_feats, pad_mask = self._process_tracks(tracks_raw)
 
-        # 3. Loading Label
-        raw_label = jet_data[self.jet_flavour]
-        target    = self.jet_flavour_map.get(int(raw_label), -1)
+        # 3. label
+        raw_label = int(jet_data[self.jet_flavour])
+        target    = self.jet_flavour_map.get(raw_label, -1)
+        if target == -1:
+            logger.warning(
+                f"__getitem__: unmapped jet_flavour label {raw_label} at file index {real_idx}. Assigned label -1."
+            )
 
         return {
             "jet_features":   torch.from_numpy(jet_feats),
             "track_features": torch.from_numpy(track_feats),
-            "mask":           torch.from_numpy(padding_mask),
+            "mask":           torch.from_numpy(pad_mask),
             "label":          torch.tensor(target, dtype=torch.long),
         }
-    
+
 
 class _IndexDataset(Dataset):
     """
     Wrapper around GN2Dataset whose __getitem__ returns the integer
     index instead of the processed sample.
 
-    DataLoader calls __getitem__ on each element of a batch,
-    collects the results into a list, and passes that list to collate_fn.
-    By returning the raw index here, collate_fn receives List[int] - exactly
-    what BatchCollator needs to do a single batched HDF5 read.
+    The DataLoader collects these integers into a list and passes them to
+    _BatchCollator.__call__, which performs a single batched HDF5 read.
 
     Attributes:
         dataset (GN2Dataset): the dataset to wrap.
@@ -339,7 +356,7 @@ class _BatchCollator:
     access and reads the whole batch in a single HDF5 fancy-index call.
 
     Parameters:
-        dataset (GN2Dataset): the dataset instance to read from.
+        dataset (GN2Dataset): dataset instance to read from.
     """
 
     def __init__(self, dataset: GN2Dataset):
@@ -351,98 +368,103 @@ class _BatchCollator:
         """
         self.dataset = dataset
 
-    def __call__(self, local_indices: List[int]) -> Dict[str, torch.Tensor]:
+    def __call__(self, jet_indices: List[int]) -> Dict[str, torch.Tensor]:
         """
         Read and process one batch.
 
         Args:
-            local_indices (List[int]): dataset-level indices for this batch,
-                returned by _IndexDataset.__getitem__ and collected by DataLoader.
+            jet_indices (List[int]): dataset-level indices for this batch,
+                as returned by _IndexDataset.__getitem__ and collected by DataLoader.
 
         Returns:
             dict with keys:
-                "jet_features"   (torch.Tensor, shape (n_jet_vars,))
-                "track_features" (torch.Tensor, shape (n_tracks, n_track_vars))
-                "mask"           (torch.Tensor, shape (n_tracks,))
-                "label"          (torch.Tensor, scalar long)
-
-        Raise:
-            ValueError: TODO
+                "jet_features"   (torch.Tensor, shape (B, n_jet_vars))
+                "track_features" (torch.Tensor, shape (B, n_tracks, n_track_vars))
+                "mask"           (torch.Tensor, shape (B, n_tracks))
+                "label"          (torch.Tensor, shape (B,))
         """
         dataset = self.dataset
         f       = dataset._get_handler()
 
-        # sort local indices
-        local_indices = np.asarray(local_indices)
-        real_idx      = dataset.indices[local_indices]
-        sort_order    = np.argsort(real_idx)
-        real_idx      = real_idx[sort_order] 
-
-        # 1. single batch read
-        jets_raw   = f["jets"][real_idx]                 # one HDF5 call for all jets
-        tracks_raw = f["tracks"][real_idx]               # one HDF5 call for all tracks
+        # sort "jet_indices" for contiguous HDF5 reads
+        jet_indices = np.asarray(jet_indices)
+        real_idx    = dataset.indices[jet_indices]
+        sort_order  = np.argsort(real_idx)
+        real_idx    = real_idx[sort_order]
 
         n_jets       = len(real_idx)
-        n_jet_vars   = len(dataset.jet_vars)
         n_track_vars = len(dataset.track_vars)
+        n_tracks     = dataset.n_tracks
 
-        jet_batch   = np.empty((n_jets, n_jet_vars), dtype=np.float32)
-        track_batch = np.zeros((n_jets, dataset.n_tracks, n_track_vars), dtype=np.float32)
-        mask_batch  = np.zeros((n_jets, dataset.n_tracks), dtype=bool)
-        label_batch = np.empty(n_jets, dtype=np.int64)
+        # 1. single batched HDF5 read
+        jets_raw   = f["jets"][real_idx]
+        tracks_raw = f["tracks"][real_idx]
 
         # 2. jet features
-        jet_feats = dataset._process_jet(jets_raw["pt"], jets_raw["eta"])
-        jet_batch[:] = jet_feats
+        jet_batch = dataset._process_jet(jets_raw["pt"], jets_raw["eta"]).astype(np.float32)
 
         # 3. track features
+        track_batch = np.zeros((n_jets, n_tracks, n_track_vars), dtype=np.float32)
+        mask_batch  = np.zeros((n_jets, n_tracks), dtype=bool)
+
         has_valid = "valid" in tracks_raw.dtype.names
         has_norm  = (
             dataset.norm_stats is not None
-            and "track_mu" in dataset.norm_stats
+            and "track_mu"    in dataset.norm_stats
             and "track_sigma" in dataset.norm_stats
         )
         track_mu    = dataset.norm_stats["track_mu"]    if has_norm else None
         track_sigma = dataset.norm_stats["track_sigma"] if has_norm else None
 
-        for i in range(n_jets):
-            jet_tracks = tracks_raw[i]
+        # (n_jets, n_tracks) boolean validity matrix
+        if has_valid:
+            valid_matrix = tracks_raw["valid"].astype(bool)[:, :n_tracks]
+        else:
+            max_file_tracks = tracks_raw.shape[1]
+            valid_matrix    = np.ones((n_jets, min(max_file_tracks, n_tracks)), dtype=bool)
 
-            if has_valid:
-                valid_track_indices = np.where(jet_tracks["valid"].astype(bool))[0][:dataset.n_tracks]
-            else:
-                valid_track_indices = np.arange(min(len(jet_tracks), dataset.n_tracks))
+        # pad/crop to n_tracks columns
+        if valid_matrix.shape[1] < n_tracks:
+            pad_cols     = n_tracks - valid_matrix.shape[1]
+            valid_matrix = np.pad(valid_matrix, ((0, 0), (0, pad_cols)))
 
-            n_valid = len(valid_track_indices)
-            if n_valid == 0:
-                continue
+        mask_batch[:] = valid_matrix
 
-            track_block = jet_tracks[valid_track_indices]
-            for j, var in enumerate(dataset.track_vars):
-                vals = track_block[var].astype(np.float32)
-                if has_norm:
-                    vals = (vals - track_mu[j]) / track_sigma[j]
-                track_batch[i, :n_valid, j] = vals
+        for i, var in enumerate(dataset.track_vars):
+            raw_block = tracks_raw[var].astype(np.float32)[:, :n_tracks]        # shape (n_jets, n_tracks)
 
-            mask_batch[i, :n_valid] = True
+            if raw_block.shape[1] < n_tracks:
+                pad_cols  = n_tracks - raw_block.shape[1]
+                raw_block = np.pad(raw_block, ((0, 0), (0, pad_cols)))
+
+            if has_norm:
+                raw_block = (raw_block - track_mu[i]) / track_sigma[i]
+
+            # zero out padding positions
+            raw_block[~valid_matrix] = 0.
+            track_batch[:, :, i]     = raw_block
 
         # 4. labels
         raw_labels  = jets_raw[dataset.jet_flavour].astype(int)
-        label_batch = np.array([dataset.jet_flavour_map.get(label, -1) for label in raw_labels], dtype=np.int64)
-        
+        label_batch = np.array(
+            [dataset.jet_flavour_map.get(label, -1) for label in raw_labels],
+            dtype=np.int64,
+        )
+        n_unknown = int((label_batch == -1).sum())
+        if n_unknown > 0:
+            logger.warning(
+                f"BatchCollator: {n_unknown}/{n_jets} jets have unmapped jet_flavour labels and will carry label -1. Check jet_flavour_map."
+            )
+
         # restore original batch order (undo sort)
         restore_order = np.empty_like(sort_order)
         restore_order[sort_order] = np.arange(n_jets)
-        jet_batch   = jet_batch[restore_order]
-        track_batch = track_batch[restore_order]
-        mask_batch  = mask_batch[restore_order]
-        label_batch = label_batch[restore_order]
 
         return {
-            "jet_features":   torch.from_numpy(jet_batch),
-            "track_features": torch.from_numpy(track_batch),
-            "mask":           torch.from_numpy(mask_batch),
-            "label":          torch.from_numpy(label_batch),
+            "jet_features":   torch.from_numpy(jet_batch[restore_order]),
+            "track_features": torch.from_numpy(track_batch[restore_order]),
+            "mask":           torch.from_numpy(mask_batch[restore_order]),
+            "label":          torch.from_numpy(label_batch[restore_order]),
         }
 
 
@@ -455,7 +477,7 @@ def GN2DataLoader(
     drop_last: bool = False,
 ) -> DataLoader:
     """
-    Build a DataLoader that uses BatchCollator for fast batched HDF5 reads.
+    Build a DataLoader that uses _BatchCollator for fast batched HDF5 reads.
 
     Args:
         dataset     (GN2Dataset): dataset instance with sorted indices.
@@ -487,14 +509,14 @@ if __name__ == "__main__":
 
     import argparse
     import sys
+    import time
     from src.trasformer_jet_tagging.utils import compute_normalization_stats, load_config_json
     from sklearn.model_selection import train_test_split
 
     parser = argparse.ArgumentParser(
         description="Test for GN2Dataset: loads a sample, checks shapes and normalization."
     )
-
-    parser.add_argument("--config",     type=str,   default="configs/config.json")
+    parser.add_argument("--config", type=str, default="configs/config.json")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -518,7 +540,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     indices = np.arange(n_jets)
-    logger.info(f"Jets used for test : {n_jets:,}")
+    logger.info(f"Total jets in file: {n_jets:,}")
 
     train_indices, test_indices = train_test_split(
         indices,
@@ -539,7 +561,7 @@ if __name__ == "__main__":
         n_tracks=n_tracks,
         norm_stats=norm_stats
     )
-    test_dataset  = GN2Dataset(
+    test_dataset = GN2Dataset(
         file_path,
         indices=test_indices,
         n_tracks=n_tracks,
@@ -566,15 +588,14 @@ if __name__ == "__main__":
     n_valid = sample["mask"].sum().item()
     logger.info(f"  valid tracks in sample[0] : {n_valid} / {n_tracks}")
     logger.info(f"  label in sample[0]        : {sample["label"].item()}"
-                f" ({[k for k,v in JET_FLAVOUR_MAP.items() if v == sample["label"].item()]})")
+                f" ({[k for k, v in JET_FLAVOUR_MAP.items() if v == sample['label'].item()]})")
 
-    # batch loader test
-    import time
+    # batch loader speed test
     logger.info("=== Batch loader test (BatchCollator) ===")
     train_loader = GN2DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    t0    = time.time()
+    t0    = time.perf_counter()
     batch = next(iter(train_loader))
-    dt    = time.time() - t0
+    dt    = time.perf_counter() - t0
     logger.info(f"  Jets shape   : {batch["jet_features"].shape}")
     logger.info(f"  Tracks shape : {batch["track_features"].shape}")
     logger.info(f"  Labels shape : {batch["label"].shape}")
@@ -583,14 +604,8 @@ if __name__ == "__main__":
     # normalization check
     logger.info("=== Normalization sanity check (first 1000 training jets) ===")
     n_check  = min(1_000, len(train_dataset))
-    jet_pts  = []
-    jet_etas = []
-    for i in range(n_check):
-        s = train_dataset[i]
-        jet_pts.append(s["jet_features"][0].item())
-        jet_etas.append(s["jet_features"][1].item())
-    jet_pts  = np.array(jet_pts)
-    jet_etas = np.array(jet_etas)
+    jet_pts  = np.array([train_dataset[i]["jet_features"][0].item() for i in range(n_check)])
+    jet_etas = np.array([train_dataset[i]["jet_features"][1].item() for i in range(n_check)])
     logger.info(f"  jet pt  (normalized) - mean: {jet_pts.mean():.4f}  std: {jet_pts.std():.4f}  (expect ~0, ~1)")
     logger.info(f"  jet eta (normalized) - mean: {jet_etas.mean():.4f}  std: {jet_etas.std():.4f}  (expect ~0, ~1)")
 
@@ -604,5 +619,5 @@ if __name__ == "__main__":
     if all_ok:
         logger.info("All checks passed.")
     else:
-        logger.error("One or more shape checks failed. See above.")
+        logger.error("One or more shape checks FAILED. See above.")
         sys.exit(1)
