@@ -28,14 +28,6 @@ jobs:
         run: |
           sphinx-build -b html docs docs/_build/html
 
-      - name: Commit and push
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ./docs
-          git diff --staged --quiet || git commit -m "docs: aggiornamento automatico [skip ci]"
-          git push
-
       - name: Pubblica su GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
