@@ -28,7 +28,6 @@ Architecture:
 """
 
 import logging
-from typing import Optional, Dict
 
 import torch
 import torch.nn as nn
@@ -112,7 +111,7 @@ class TransformerLayer(nn.Module):
     def forward(
         self,
         inputs: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor] = None
+        key_padding_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         """
         Forward pass through the transformer layer.
@@ -168,7 +167,7 @@ class AttentionPooling(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        padding_mask: Optional[torch.Tensor] = None
+        padding_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         """
         Forward pass through the attention pooling layer.
@@ -388,7 +387,7 @@ class GN2(nn.Module):
         mask          : torch.Tensor,
         fc            : float = 0.2,
         ftau          : float = 0.05,
-        label_map     : Dict[str, int] = None,
+        label_map     : dict[str, int] = None,
     ) -> torch.Tensor:
         """
         Compute the b-tagging discriminant D_b:
@@ -424,7 +423,7 @@ class GN2(nn.Module):
         mask          : torch.Tensor,
         fb            : float = 0.3,
         ftau          : float = 0.01,
-        label_map     : Dict[str, int] = None,
+        label_map     : dict[str, int] = None,
     ) -> torch.Tensor:
         """
         Compute the c-tagging discriminant D_c:

@@ -13,19 +13,18 @@ Plots produced:
                           track-level correlation matrix (mean over jets).
 """
 
-import json
 import logging
 from pathlib import Path
-from typing import Dict, List
 
 import h5py
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")               # non-interactive backend (no display needed)
 import matplotlib.pyplot as plt
 import mplhep as hep
 
-from .constants import FLAVOUR_LABELS, FLAVOUR_COLORS
+from .constants import FLAVOUR_COLORS, FLAVOUR_LABELS
 
 hep.style.use(hep.style.ATLAS)
 logger = logging.getLogger("GN2.plotting")
@@ -34,10 +33,10 @@ logger = logging.getLogger("GN2.plotting")
 def _load_jet_data(
     file_path: str,
     indices: np.ndarray,
-    jet_vars: List[str],
+    jet_vars: list[str],
     jet_flavour: str,
-    jet_flavour_map: Dict[int, int],
-) -> Dict[str, np.ndarray]:
+    jet_flavour_map: dict[int, int],
+) -> dict[str, np.ndarray]:
     """
     Load jet-level variables and labels from HDF5 for a subset of jets.
 
@@ -54,7 +53,7 @@ def _load_jet_data(
             "label" (np.ndarray): shape (n_jets,) integer class index for each jet.
     """
     sorted_idx = np.sort(indices)
-    data: Dict[str, np.ndarray] = {}
+    data: dict[str, np.ndarray] = {}
 
     with h5py.File(file_path, "r") as f:
         jets = f["jets"][sorted_idx]
@@ -69,11 +68,11 @@ def _load_jet_data(
 def _load_track_data(
     file_path: str,
     indices: np.ndarray,
-    track_vars: List[str],
+    track_vars: list[str],
     jet_flavour: str,
-    jet_flavour_map: Dict[int, int],
+    jet_flavour_map: dict[int, int],
     max_jets: int = 50_000,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """
     Load valid track-level variables from HDF5, flattened across jets.
 
@@ -91,7 +90,7 @@ def _load_track_data(
             "label" (np.ndarray): shape (n_tracks,) integer class index for each track's jet.
     """
     sorted_idx = np.sort(indices[:max_jets])
-    data_lists: Dict[str, list] = {v: [] for v in track_vars}
+    data_lists: dict[str, list] = {v: [] for v in track_vars}
     data_lists["label"] = []
 
     with h5py.File(file_path, "r") as f:
@@ -120,8 +119,8 @@ def _load_track_data(
 # Plot 1 - Jet variables
 # ---------------------------------------------------------------------------
 def plot_jet_variables(
-    jet_data: Dict[str, np.ndarray],
-    jet_vars: List[str],
+    jet_data: dict[str, np.ndarray],
+    jet_vars: list[str],
     output_dir: Path,
 ) -> None:
     """
@@ -195,8 +194,8 @@ def plot_jet_variables(
 # Plot 2 - Track variables
 # ---------------------------------------------------------------------------
 def plot_track_variables(
-    track_data: Dict[str, np.ndarray],
-    track_vars: List[str],
+    track_data: dict[str, np.ndarray],
+    track_vars: list[str],
     output_dir: Path,
     vars_per_page: int = 6,
 ) -> None:
@@ -262,10 +261,10 @@ def plot_track_variables(
 # Plot 3 - Correlation matrices
 # ---------------------------------------------------------------------------
 def plot_correlations(
-    jet_data: Dict[str, np.ndarray],
-    track_data: Dict[str, np.ndarray],
-    jet_vars: List[str],
-    track_vars: List[str],
+    jet_data: dict[str, np.ndarray],
+    track_data: dict[str, np.ndarray],
+    jet_vars: list[str],
+    track_vars: list[str],
     output_dir: Path,
 ) -> None:
     """
@@ -338,10 +337,10 @@ def plot_correlations(
 
 def make_all_plots(
     file_path: str,
-    jet_vars: List[str],
-    track_vars: List[str],
+    jet_vars: list[str],
+    track_vars: list[str],
     jet_flavour: str,
-    jet_flavour_map: Dict[int, int],
+    jet_flavour_map: dict[int, int],
     indices: np.ndarray,
     output_dir: str = "outputs/plots",
     n_jets_track: int = 50_000,
@@ -386,6 +385,7 @@ def make_all_plots(
 if __name__ == "__main__":
     import argparse
     import sys
+
     from . import utils
 
     logging.basicConfig(

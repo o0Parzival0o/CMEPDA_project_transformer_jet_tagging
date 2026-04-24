@@ -53,18 +53,17 @@ Performance notes:
 
 import logging
 import threading
-from typing import Dict, List, Tuple, Optional
 
 import h5py
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader, BatchSampler, SequentialSampler, RandomSampler
+from torch.utils.data import BatchSampler, DataLoader, Dataset, RandomSampler, SequentialSampler
 
 from .constants import (
-    JET_VARS_DEFAULT,
-    TRACK_VARS_DEFAULT,
     JET_FLAVOUR_LABEL,
     JET_FLAVOUR_MAP,
+    JET_VARS_DEFAULT,
+    TRACK_VARS_DEFAULT,
 )
 
 logger = logging.getLogger("GN2.dataset")
@@ -95,11 +94,11 @@ class GN2Dataset(Dataset):
         file_path: str,
         indices: np.ndarray,
         n_tracks: int = 40,
-        jet_vars: Optional[List[str]] = None,
-        track_vars: Optional[List[str]] = None,
-        jet_flavour: Optional[str] = None,
-        jet_flavour_map: Optional[Dict[int, int]] = None,
-        norm_stats: Optional[Dict] = None,
+        jet_vars: list[str] | None = None,
+        track_vars: list[str] | None = None,
+        jet_flavour: str | None = None,
+        jet_flavour_map: dict[int, int] | None = None,
+        norm_stats: dict | None = None,
     ):
         """
         Initialize the dataset.
@@ -136,7 +135,7 @@ class GN2Dataset(Dataset):
             logger.warning("GN2Dataset: indices are NOT sorted. Performance may degrade.")
 
         # h5py file handler: opened lazily in _get_handler(), one per thread
-        self._handler: Optional[h5py.File] = None
+        self._handler: h5py.File | None = None
         self._handler_lock = threading.Lock()
 
         # initial check
@@ -197,7 +196,7 @@ class GN2Dataset(Dataset):
 
         return np.stack([jet_pt_log, jet_eta], axis=1)  # (n, 2)
 
-    def _process_tracks(self, tracks_raw: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _process_tracks(self, tracks_raw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Filter valid tracks, crop/pad to n_tracks, and normalize.
 
@@ -234,7 +233,7 @@ class GN2Dataset(Dataset):
         return track_features, padding_mask
 
     @property
-    def shape(self) -> Tuple[int, int, int]:
+    def shape(self) -> tuple[int, int, int]:
         """
         Shape of the dataset.
 
@@ -252,7 +251,7 @@ class GN2Dataset(Dataset):
         """
         return len(self.indices)
 
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         """
         Extract a single jet and its associated tracks.
 
@@ -322,7 +321,7 @@ class _IndexDataset(Dataset):
         self.dataset = dataset
 
     @property
-    def shape(self) -> Tuple[int, int, int]:
+    def shape(self) -> tuple[int, int, int]:
         """
         Returns the shape of the dataset.
 
@@ -374,7 +373,7 @@ class _BatchCollator:
         """
         self.dataset = dataset
 
-    def __call__(self, jet_indices: List[int]) -> Dict[str, torch.Tensor]:
+    def __call__(self, jet_indices: list[int]) -> dict[str, torch.Tensor]:
         """
         Read and process one batch.
 
@@ -517,8 +516,10 @@ if __name__ == "__main__":
     import argparse
     import sys
     import time
-    from .utils import compute_normalization_stats, load_config_json
+
     from sklearn.model_selection import train_test_split
+
+    from .utils import compute_normalization_stats, load_config_json
 
     parser = argparse.ArgumentParser(
         description="Test for GN2Dataset: loads a sample, checks shapes and normalization."

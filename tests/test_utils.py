@@ -2,10 +2,10 @@
 test_utils.py
 """
 
-import numpy as np
+
 import h5py
-import tempfile
-from src.transformer_jet_tagging.utils import load_config_json, compute_normalization_stats
+import numpy as np
+from src.transformer_jet_tagging.utils import compute_normalization_stats, load_config_json
 
 
 def test_compute_norm_stats_minimal(fake_hdf5_file):

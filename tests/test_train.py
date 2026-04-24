@@ -3,11 +3,9 @@ test_train.py
 """
 
 import torch
-import pytest
-from torch.optim import AdamW
-
-from src.transformer_jet_tagging.train import GN2Loss, lr_scheduler, run_epoch
 from src.transformer_jet_tagging.model import GN2
+from src.transformer_jet_tagging.train import GN2Loss, lr_scheduler, run_epoch
+from torch.optim import AdamW
 
 
 def test_loss_forward():

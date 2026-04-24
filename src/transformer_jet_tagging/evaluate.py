@@ -21,15 +21,15 @@ import json
 import logging
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 import torch
-import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, roc_curve
 from torch.utils.data import DataLoader
 
-from . import utils
 from .dataset import GN2Dataset
 from .model import GN2
 

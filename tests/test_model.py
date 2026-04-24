@@ -2,8 +2,8 @@
 test_model.py
 """
 
-import torch
 import pytest
+import torch
 from src.transformer_jet_tagging.model import GN2, _get_activation
 
 

@@ -11,9 +11,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-
 from src.transformer_jet_tagging import utils
-from src.transformer_jet_tagging.dataset import GN2Dataset, GN2DataLoader
+from src.transformer_jet_tagging.dataset import GN2DataLoader, GN2Dataset
 from src.transformer_jet_tagging.model import GN2
 from src.transformer_jet_tagging.train import train
 
@@ -92,7 +91,7 @@ if __name__ == "__main__":
     val_indices   = np.sort(val_indices)
     test_indices  = np.sort(test_indices)
 
-    with open(norm_path, "r") as f:
+    with open(norm_path) as f:
         norm_stats = {k: np.array(v) for k, v in json.load(f).items()}
 
     logger.info(f"Train={len(train_indices):,}, Val={len(val_indices):,}, Test={len(test_indices):,}")

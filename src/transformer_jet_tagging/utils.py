@@ -4,12 +4,11 @@ utils.py
 Utility functions for the transformer jet tagging project.
 """
 
-import logging
 import json
-from typing import Dict, List, Tuple, Optional
+import logging
 
-import numpy as np
 import h5py
+import numpy as np
 from sklearn.preprocessing import StandardScaler
 
 from .constants import JET_VARS_DEFAULT, TRACK_VARS_DEFAULT
@@ -20,9 +19,9 @@ logger = logging.getLogger("GN2.utils")
 def compute_normalization_stats(
     file_path: str,
     train_indices: np.ndarray,
-    jet_vars: Optional[List[str]] = None,
-    track_vars: Optional[List[str]] = None,
-    batch_size: Optional[int] = 10_000
+    jet_vars: list[str] | None = None,
+    track_vars: list[str] | None = None,
+    batch_size: int | None = 10_000
 ):
     """
     Compute mean and std normalization statistics on the training set only.
@@ -119,6 +118,6 @@ def load_config_json(filepath):
     Returns:
         dict: configuration parameters loaded from the JSON file.
     """
-    with open(filepath, 'r') as f:
+    with open(filepath) as f:
         config = json.load(f)
     return config

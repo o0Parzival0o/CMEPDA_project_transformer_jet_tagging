@@ -2,11 +2,12 @@
 conftest.py
 """
 
-import pytest
-import numpy as np
-import h5py
-import sys
 import os
+import sys
+
+import h5py
+import numpy as np
+import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
