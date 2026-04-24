@@ -1,5 +1,8 @@
 # GN2 Jet Flavour Tagger
 
+[![Tests](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/tests.yml/badge.svg)](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/tests.yml)
+[![Docs](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/docs.yml/badge.svg)](https://lucanasini.github.io/CMEPDA_project_transformer_jet_tagging/)
+
 Implementazione del tagger GN2 descritto in:
 > *"Transforming jet flavour tagging at ATLAS"*, Nature Communications (2026) 17:541
 
