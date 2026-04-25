@@ -1,6 +1,6 @@
 # GN2 Jet Flavour Tagger
 
-[![Tests](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/tests.yml/badge.svg)](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/tests.yml)
+[![CI](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/tests.yml/badge.svg)](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/ci.yml)
 [![Docs](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/docs.yml/badge.svg)](https://lucanasini.github.io/CMEPDA_project_transformer_jet_tagging/)
 ![pytorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch)
 ![model](https://img.shields.io/badge/model-transformer-orange)
