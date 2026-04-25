@@ -43,10 +43,10 @@ def save_indices(output_dir: Path, train: np.ndarray, val: np.ndarray, test: np.
     np.save(idx_dir / "val_indices.npy",   val)
     np.save(idx_dir / "test_indices.npy",  test)
 
-    logger.info(f"Indices saved to {idx_dir}")
-    logger.info(f"  Train : {len(train):>8,} jets")
-    logger.info(f"  Val   : {len(val):>8,} jets")
-    logger.info(f"  Test  : {len(test):>8,} jets")
+    logger.info("Indices saved to %s", idx_dir)
+    logger.info("  Train : %s jets", f"{len(train):>8,}")
+    logger.info("  Val   : %s jets", f"{len(val):>8,}")
+    logger.info("  Test  : %s jets", f"{len(test):>8,}")
 
 
 def save_norm_stats(output_dir: Path, norm_stats: dict) -> None:
@@ -54,10 +54,10 @@ def save_norm_stats(output_dir: Path, norm_stats: dict) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / "norm_stats.json"
 
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump({k: v.tolist() for k, v in norm_stats.items()}, f, indent=2)
 
-    logger.info(f"Normalization stats saved to {out_path}")
+    logger.info("Normalization stats saved to %s", out_path)
 
 
 
@@ -84,14 +84,15 @@ def main(config_path: str):
     output_dir  = Path(config["output"]["preprocess_dir"])
 
     # 2. kinematic selection
-    logger.info(f"Reading kinematics from {file_path} ...")
+    logger.info("Reading kinematics from %s ...", {file_path})
     with h5py.File(file_path, "r") as f:
         pt  = f["jets"]["pt"][:]
         eta = f["jets"]["eta"][:]
 
     kinematic_mask = (pt > pt_min) & (pt < pt_max) & (np.abs(eta) < eta_max)
     valid_indices  = np.where(kinematic_mask)[0]
-    logger.info(f"Jets passing kinematic selection: {len(valid_indices):,} / {len(pt):,}")
+    logger.info("Jets passing kinematic selection: %s / %s",
+                f"{len(valid_indices):,}", f"{len(pt):,}")
 
     # 3. train / val / test split
     train_frac = split_fracs[0]
@@ -143,5 +144,5 @@ if __name__ == "__main__":
         help="Path to the JSON configuration file.",
     )
     args = parser.parse_args()
-    config_path = args.config
-    main(config_path)
+    cfg_path = args.config
+    main(cfg_path)

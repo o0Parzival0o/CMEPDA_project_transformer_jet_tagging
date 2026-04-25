@@ -22,12 +22,12 @@ def fake_hdf5_file(tmp_path):
             ("eta", "f4"),
             ("label", "i1")             # i1 = int8
         ])
-        f.create_dataset("jets", data=np.zeros(10, dtype=jet_dtype))            # 10 jets
+        f.create_dataset("jets", data=np.zeros(10, dtype=jet_dtype))          # 10 jets
         
         track_dtype = np.dtype([
             ("x", "f4"),
             ("y", "f4"),
             ("valid", "i1")
         ])
-        f.create_dataset("tracks", data=np.zeros((10, 5), dtype=track_dtype))   # 10 jets con 5 particles per jet
+        f.create_dataset("tracks", data=np.zeros((10, 5), dtype=track_dtype)) # 10 jets, 5 particles
     return str(path)

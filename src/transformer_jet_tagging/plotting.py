@@ -18,14 +18,13 @@ from pathlib import Path
 
 import h5py
 import matplotlib
-import numpy as np
-
-matplotlib.use("Agg")               # non-interactive backend (no display needed)
 import matplotlib.pyplot as plt
+import numpy as np
 import mplhep as hep
 
 from .constants import FLAVOUR_COLORS, FLAVOUR_LABELS
 
+matplotlib.use("Agg")               # non-interactive backend (no display needed)
 hep.style.use(hep.style.ATLAS)
 logger = logging.getLogger("GN2.plotting")
 
@@ -60,7 +59,9 @@ def _load_jet_data(
         for var in jet_vars:
             data[var] = jets[var].astype(np.float32)
         raw_labels = jets[jet_flavour].astype(int)
-        data["label"] = np.array([jet_flavour_map.get(l, 0) for l in raw_labels], dtype=np.int32)
+        data["label"] = np.array(
+            [jet_flavour_map.get(label, 0) for label in raw_labels], dtype=np.int32
+        )
 
     return data
 
@@ -97,7 +98,9 @@ def _load_track_data(
         jets_raw   = f["jets"][sorted_idx]
         tracks_raw = f["tracks"][sorted_idx]
         raw_labels = jets_raw[jet_flavour].astype(int)
-        labels     = np.array([jet_flavour_map.get(l, 0) for l in raw_labels], dtype=np.int32)
+        labels     = np.array(
+            [jet_flavour_map.get(label, 0) for label in raw_labels], dtype=np.int32
+        )
 
         has_valid = "valid" in tracks_raw.dtype.names
         for i in range(len(sorted_idx)):
@@ -147,7 +150,7 @@ def plot_jet_variables(
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
     axes = np.array(axes).reshape(-1)
 
-    for ax, (var, do_log) in zip(axes, plot_list):
+    for ax, (var, do_log) in zip(axes, plot_list, strict=False):
         values = jet_data[var].copy()
         if do_log:
             values = np.log(np.clip(values, 1e-6, None))
@@ -187,7 +190,7 @@ def plot_jet_variables(
     out = output_dir / "jet_variables.pdf"
     fig.savefig(out)
     plt.close(fig)
-    logger.info(f"Saved: {out}")
+    logger.info("Saved: %s", out)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +222,7 @@ def plot_track_variables(
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
         axes = np.array(axes).reshape(-1)
 
-        for ax, var in zip(axes, page_vars):
+        for ax, var in zip(axes, page_vars, strict=False):
             values = track_data[var]
             q_lo, q_hi = np.min(values), np.max(values)
             bins = np.linspace(q_lo, q_hi, 60)
@@ -254,7 +257,7 @@ def plot_track_variables(
         out = output_dir / f"track_variables_page{page + 1}.pdf"
         fig.savefig(out)
         plt.close(fig)
-        logger.info(f"Saved: {out}")
+        logger.info("Saved: %s", out)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +320,7 @@ def plot_correlations(
         out = output_dir / "correlation_jet.pdf"
         fig.savefig(out)
         plt.close(fig)
-        logger.info(f"Saved: {out}")
+        logger.info("Saved: %s", out)
 
     # --- track correlation ---
     if len(track_vars) >= 2:
@@ -330,7 +333,7 @@ def plot_correlations(
         out = output_dir / "correlation_track.pdf"
         fig.savefig(out)
         plt.close(fig)
-        logger.info(f"Saved: {out}")
+        logger.info("Saved: %s", out)
 
 
 
@@ -361,11 +364,12 @@ def make_all_plots(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Loading jet data for {len(indices):,} jets ...")
+    logger.info("Loading jet data for %s jets ...", f"{len(indices):,}")
     jet_data = _load_jet_data(file_path, indices, jet_vars, jet_flavour, jet_flavour_map)
 
-    logger.info(f"Loading track data (up to {n_jets_track:,} jets) ...")
-    track_data = _load_track_data(file_path, indices, track_vars, jet_flavour, jet_flavour_map, max_jets = n_jets_track)
+    logger.info("Loading track data (up to %s jets) ...", f"{n_jets_track:,}")
+    track_data = _load_track_data(file_path, indices, track_vars, jet_flavour,
+                                  jet_flavour_map, max_jets = n_jets_track)
 
     logger.info("Plotting jet variables ...")
     plot_jet_variables(jet_data, jet_vars, out)
@@ -376,7 +380,7 @@ def make_all_plots(
     logger.info("Plotting correlations ...")
     plot_correlations(jet_data, track_data, jet_vars, track_vars, out)
 
-    logger.info(f"All plots saved to '{out}/'")
+    logger.info("All plots saved to '%s/'", out)
 
 
 
@@ -413,14 +417,14 @@ if __name__ == "__main__":
 
     idx_path = preprocess_dir / "indices" / "train_indices.npy"
     if not idx_path.exists():
-        logger.error(f"Index file not found: {idx_path}. Run preprocess.py first.")
+        logger.error("Index file not found: %s. Run preprocess.py first.", idx_path)
         sys.exit(1)
 
     indices = np.sort(np.load(idx_path))
     if args.n_jets < len(indices):
         rng     = np.random.default_rng(seed=0)
         indices = np.sort(rng.choice(indices, size=args.n_jets, replace=False))
-    logger.info(f"Using {len(indices):,} jets for plots.")
+    logger.info("Using %s jets for plots.", f"{len(indices):,}")
 
     make_all_plots(
         file_path       = file_path,

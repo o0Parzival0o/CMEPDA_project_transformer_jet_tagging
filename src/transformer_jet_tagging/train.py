@@ -22,13 +22,13 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from .dataset import GN2DataLoader
+from .dataset import gn2_dataloader
 from .model import GN2
 
 logger = logging.getLogger("GN2.train")
@@ -57,7 +57,8 @@ class GN2Loss(nn.Module):
 
         Args:
             outputs (dict): model outputs with keys:
-                "jet_outputs" (torch.Tensor, shape (batch_size, n_classes)): raw outputs for jet classification.
+                "jet_outputs" (torch.Tensor, shape (batch_size, n_classes)):
+                    raw outputs for jet classification.
             labels (dict): ground truth labels with keys:
                 "jet_label" (torch.Tensor, shape (batch_size,)): integer class labels for each jet.
         """
@@ -154,12 +155,16 @@ def run_epoch(
         scheduler (LambdaLR): LambdaLR instance (stepped only during training).
         device (torch.device): Device to move tensors to.
         is_train (bool): True for training, False for validation.
-        scaler (torch.amp.GradScaler): optional GradScaler for mixed precision training (default: None).
+        scaler (torch.amp.GradScaler): optional GradScaler for mixed precision training.
+            (default: None)
 
     Returns:
         dict with averaged loss.
     """
-    model.train() if is_train else model.eval()
+    if is_train:
+        model.train()
+    else:
+        model.eval()
 
     totals    = {"total": 0.0, "jet": 0.0}
     n_batches = 0
@@ -264,13 +269,9 @@ def train(
 
         lr_now = lr_decay.get_last_lr()[0]
 
-        logger.info(
-            f"Epoch {epoch:4d}/{n_epochs} | "
-            f"train loss={train_losses['total']:.4f} "
-            f"(jet={train_losses['jet']:.4f}) | "
-            f"val={val_losses['total']:.4f} | "
-            f"lr={lr_now:.2e}"
-        )
+        logger.info("Epoch %s/%s | train loss=%s (jet=%s) | val=%s | lr=%s",
+                    f"{epoch:4d}", n_epochs, f"{train_losses['total']:.4f}",
+                    f"{train_losses['jet']:.4f}", f"{val_losses['total']:.4f}", f"{lr_now:.2e}")
 
         for k, v in train_losses.items():
             writer.add_scalar(f"train/{k}", v, epoch)
@@ -287,13 +288,16 @@ def train(
                 "val_loss"   : best_val_loss,
                 "config"     : config,
             }, checkpoint_path)
-            logger.info(f"    New best val_loss={best_val_loss:.4f} - saved to {checkpoint_path}")
+            logger.info("    New best val_loss=%s - saved to %s",
+                        f"{best_val_loss:.4f}", checkpoint_path)
 
     writer.close()
     logger.info("Training complete.")
 
     # reload best weights before returning
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=True)["model_state"])
+    model.load_state_dict(
+        torch.load(checkpoint_path, map_location=device, weights_only=True)["model_state"]
+    )
     return model
 
 
@@ -316,15 +320,15 @@ if __name__ == "__main__":
                         help="Fraction of data to use for debug (default: 5%%)")
     args = parser.parse_args()
 
-    config = utils.load_config_json(args.config)
+    cfg = utils.load_config_json(args.config)
 
-    preprocess_dir = Path(config["output"]["preprocess_dir"])
-    output_dir     = Path(config["output"].get("checkpoints_dir", "outputs/checkpoints"))
+    preprocess_dir = Path(cfg["output"]["preprocess_dir"])
+    ckpt_dir     = Path(cfg["output"].get("checkpoints_dir", "outputs/checkpoints"))
 
-    jet_vars   = config["data"]["jet_features"]
-    track_vars = config["data"]["track_features"]
-    label_vars = config["data"]["label"]
-    label_map  = {int(k): v for k, v in config["data"]["label_map"].items()}
+    cfg_jet_vars   = cfg["data"]["jet_features"]
+    cfg_track_vars = cfg["data"]["track_features"]
+    label_vars = cfg["data"]["label"]
+    label_map  = {int(k): v for k, v in cfg["data"]["label_map"].items()}
 
     # run preprocessing if artifacts are missing
     idx_dir   = preprocess_dir / "indices"
@@ -340,50 +344,59 @@ if __name__ == "__main__":
     val_indices   = np.load(idx_dir / "val_indices.npy")
 
     if args.debug_frac < 1.0:
-        rng           = np.random.default_rng(seed=42)
-        train_indices = rng.choice(train_indices, size=int(len(train_indices) * args.debug_frac), replace=False)
-        val_indices   = rng.choice(val_indices,   size=int(len(val_indices)   * args.debug_frac), replace=False)
-        logger.info(f"Debug mode: {args.debug_frac:.0%} of data - "
-                    f"train={len(train_indices):,}  val={len(val_indices):,}")
+        rng = np.random.default_rng(seed=42)
+        train_indices = rng.choice(
+            train_indices,
+            size=int(len(train_indices) * args.debug_frac),
+            replace=False
+        )
+        val_indices = rng.choice(
+            val_indices,
+            size=int(len(val_indices) * args.debug_frac),
+            replace=False
+        )
+        logger.info("Debug mode: %s of data - train=%s  val=%s",
+                    f"{args.debug_frac:.0%}", f"{len(train_indices):,}", f"{len(val_indices):,}")
 
     train_indices = np.sort(train_indices)
     val_indices   = np.sort(val_indices)
 
-    with open(norm_path) as f:
+    with open(norm_path, encoding="utf-8") as f:
         norm_stats = {k: np.array(v) for k, v in json.load(f).items()}
 
     common_kwargs = dict(
-        file_path       = config["data"]["h5_path"],
-        n_tracks        = config["data"].get("max_tracks", 40),
-        jet_vars        = jet_vars,
-        track_vars      = track_vars,
+        h5_file_path    = cfg["data"]["h5_path"],
+        max_tracks      = cfg["data"].get("max_tracks", 40),
+        jet_vars        = cfg_jet_vars,
+        track_vars      = cfg_track_vars,
         jet_flavour     = label_vars,
         jet_flavour_map = label_map,
-        norm_stats      = norm_stats,
+        stats           = norm_stats,
     )
-    
-    training_config = config.get("training", {})
-    batch_size      = training_config.get("batch_size", 1024)
-    num_workers     = training_config.get("num_workers", 0)
+
+    cfg_training = cfg.get("training", {})
+    batch_size      = cfg_training.get("batch_size", 1024)
+    num_workers     = cfg_training.get("num_workers", 0)
 
     loader_kwargs = dict(
-        batch_size  = batch_size,
+        bs          = batch_size,
         num_workers = num_workers,
         pin_memory  = torch.cuda.is_available(),
     )
 
-    train_dataset = GN2Dataset(indices=train_indices, **common_kwargs)
-    val_dataset   = GN2Dataset(indices=val_indices,   **common_kwargs)
+    train_dataset = GN2Dataset(jet_indices=train_indices, **common_kwargs)
+    val_dataset   = GN2Dataset(jet_indices=val_indices,   **common_kwargs)
 
-    train_loader = GN2DataLoader(train_dataset, **loader_kwargs, shuffle=config["data"].get("shuffle", False))
-    val_loader   = GN2DataLoader(val_dataset, **loader_kwargs, shuffle=False)
+    cfg_train_loader = gn2_dataloader(train_dataset, **loader_kwargs,
+                                 shuffle=cfg["data"].get("shuffle", False))
+    cfg_val_loader   = gn2_dataloader(val_dataset, **loader_kwargs, shuffle=False)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    model_config = config.get("model", {})
-    model = GN2(
-        n_jet_vars       = len(jet_vars),
-        n_track_vars     = len(track_vars),
+    run_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model_config = cfg.get("model", {})
+    run_model = GN2(
+        n_jet_vars       = len(cfg_jet_vars),
+        n_track_vars     = len(cfg_track_vars),
         n_classes        = len(label_map),
         init_hidden_dim  = model_config.get("initialiser_hidden_dim", None),
         init_output_dim  = model_config.get("initialiser_output_dim", None),
@@ -395,13 +408,13 @@ if __name__ == "__main__":
         dropout          = model_config.get("transformer_dropout", None),
         head_hidden_dims = model_config.get("head_hidden_dims", None),
         activation       = model_config.get("activation", None),
-    ).to(device)
+    ).to(run_device)
 
     train(
-        model,
-        train_loader,
-        val_loader,
-        config,
-        output_dir,
-        device
+        run_model,
+        cfg_train_loader,
+        cfg_val_loader,
+        cfg,
+        ckpt_dir,
+        run_device
     )

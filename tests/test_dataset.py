@@ -9,12 +9,12 @@ from src.transformer_jet_tagging.dataset import GN2Dataset, _BatchCollator
 def test_dataset_len(fake_hdf5_file):
 
     ds = GN2Dataset(
-        file_path  = fake_hdf5_file,
-        indices    = np.arange(10),
-        n_tracks   = 4,
-        jet_vars   = ["pt", "eta"],
-        track_vars = ["x", "y"],
-        jet_flavour = "label",
+        h5_file_path = fake_hdf5_file,
+        jet_indices  = np.arange(10),
+        max_tracks   = 4,
+        jet_vars     = ["pt", "eta"],
+        track_vars   = ["x", "y"],
+        jet_flavour  = "label",
     )
 
     assert len(ds) == 10
@@ -23,12 +23,12 @@ def test_dataset_len(fake_hdf5_file):
 def test_getitem_output_shapes(fake_hdf5_file):
 
     ds = GN2Dataset(
-        file_path  = fake_hdf5_file,
-        indices    = np.arange(10),
-        n_tracks   = 4,
-        jet_vars   = ["pt", "eta"],
-        track_vars = ["x", "y"],
-        jet_flavour = "label",
+        h5_file_path = fake_hdf5_file,
+        jet_indices  = np.arange(10),
+        max_tracks   = 4,
+        jet_vars     = ["pt", "eta"],
+        track_vars   = ["x", "y"],
+        jet_flavour  = "label",
     )
 
     sample = ds[0]
@@ -42,12 +42,12 @@ def test_getitem_output_shapes(fake_hdf5_file):
 def test_getitem_finite_values(fake_hdf5_file):
 
     ds = GN2Dataset(
-        file_path  = fake_hdf5_file,
-        indices    = np.arange(10),
-        n_tracks   = 4,
-        jet_vars   = ["pt", "eta"],
-        track_vars = ["x", "y"],
-        jet_flavour = "label",
+        h5_file_path = fake_hdf5_file,
+        jet_indices  = np.arange(10),
+        max_tracks   = 4,
+        jet_vars     = ["pt", "eta"],
+        track_vars   = ["x", "y"],
+        jet_flavour  = "label",
     )
 
     sample = ds[0]
@@ -59,7 +59,7 @@ def test_getitem_finite_values(fake_hdf5_file):
 def test_process_jet_no_norm():
 
     ds = GN2Dataset.__new__(GN2Dataset)
-    ds.norm_stats = None
+    ds.stats = None
 
     pt  = np.array([10., 15., 20.], dtype=np.float32)
     eta = np.array([2., 3., 4.],  dtype=np.float32)
@@ -73,11 +73,11 @@ def test_process_jet_no_norm():
 def test_process_tracks_padding_mask():
 
     ds = GN2Dataset.__new__(GN2Dataset)
-    ds.n_tracks    = 5
+    ds.max_tracks    = 5
     ds.track_vars  = ["x", "y"]
     ds.jet_vars    = ["pt", "eta"],
     ds.jet_flavour = "label"
-    ds.norm_stats  = None
+    ds.stats       = None
 
     tracks = np.array([
         (1., 2., 1),
@@ -104,12 +104,12 @@ def test_label_mapping():
 def test_batch_collator_shapes(fake_hdf5_file):
 
     ds = GN2Dataset(
-        file_path  = fake_hdf5_file,
-        indices    = np.arange(10),
-        n_tracks   = 5,
-        jet_vars   = ["pt", "eta"],
-        track_vars = ["x", "y"],
-        jet_flavour = "label",
+        h5_file_path = fake_hdf5_file,
+        jet_indices  = np.arange(10),
+        max_tracks   = 5,
+        jet_vars     = ["pt", "eta"],
+        track_vars   = ["x", "y"],
+        jet_flavour  = "label",
     )
 
     collator = _BatchCollator(ds)
@@ -124,12 +124,12 @@ def test_batch_collator_shapes(fake_hdf5_file):
 def test_batch_collator_finite(fake_hdf5_file):
     
     ds = GN2Dataset(
-        file_path  = fake_hdf5_file,
-        indices    = np.arange(10),
-        n_tracks   = 5,
-        jet_vars   = ["pt", "eta"],
-        track_vars = ["x", "y"],
-        jet_flavour = "label",
+        h5_file_path = fake_hdf5_file,
+        jet_indices  = np.arange(10),
+        max_tracks   = 5,
+        jet_vars     = ["pt", "eta"],
+        track_vars   = ["x", "y"],
+        jet_flavour  = "label",
     )
 
     collator = _BatchCollator(ds)

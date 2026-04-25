@@ -30,7 +30,7 @@ Architecture:
 import logging
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from .constants import FLAVOUR_LABELS
 
@@ -93,13 +93,19 @@ class TransformerLayer(nn.Module):
             n_heads (int): number of attention heads (default 8)
             d_ff (int): feed-forward inner dimension (default 512)
             dropout (float): dropout rate (default 0.0)
-            activation (str): activation function to use in feed-forward network (default "relu"). Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus".
+            activation (str): activation function to use in feed-forward network (default "relu").
+                Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus".
         """
         super().__init__()
         self.dim_emb = dim_emb
         self.n_heads = n_heads
         self.norm1 = nn.LayerNorm(dim_emb)      # normalization before attention
-        self.attn  = nn.MultiheadAttention(dim_emb, n_heads, dropout=dropout, batch_first=True)     # note: batch_first=True for (B, T, d_model) input
+        self.attn  = nn.MultiheadAttention(
+            dim_emb,
+            n_heads,
+            dropout=dropout,
+            batch_first=True                    # note: batch_first=True for (B, T, d_model) input
+        )
         self.norm2 = nn.LayerNorm(dim_emb)      # normalization before feed-forward
         self.ff    = nn.Sequential(
             nn.Linear(dim_emb, dim_ff),
@@ -179,9 +185,10 @@ class AttentionPooling(nn.Module):
         Returns:
             (torch.Tensor): shape (B, d_out), pooled jet representation
         """
-        scores = self.query(x).squeeze(-1)                  # (B, T), attention scores for each track
+        scores = self.query(x).squeeze(-1)          # (B, T), attention scores for each track
         if padding_mask is not None:
-            scores = scores.masked_fill(~padding_mask, float('-inf'))       # mask padded positions to -inf so that softmax gives zero weight to ignored tracks
+            # mask padded positions to -inf so that softmax gives zero weight to ignored tracks
+            scores = scores.masked_fill(~padding_mask, float('-inf'))
         # se un jet ha tutte le tracce mascherate, softmax dà nan → fallback a uniform
         all_masked = (~padding_mask).all(dim=-1, keepdim=True)  # (B, 1)
         scores = scores.masked_fill(all_masked.expand_as(scores), 0.0)  # uniform fallback
@@ -190,7 +197,12 @@ class AttentionPooling(nn.Module):
         return pooled
 
 
-def _mlp(in_dim: int, hidden_dims: list[int], out_dim: int, activation: str = "relu") -> nn.Sequential:
+def _mlp(
+        in_dim: int,
+        hidden_dims: list[int],
+        out_dim: int,
+        activation: str = "relu"
+) -> nn.Sequential:
     """
     Build an MLP with ReLU activations.
     
@@ -198,7 +210,8 @@ def _mlp(in_dim: int, hidden_dims: list[int], out_dim: int, activation: str = "r
         in_dim (int): input dimension
         hidden_dims (list[int]): list of hidden layer dimensions
         out_dim (int): output dimension
-        activation (str): activation function to use in hidden layers (default "relu"). Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus".
+        activation (str): activation function to use in hidden layers (default "relu").
+            Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus".
 
     Returns:
         nn.Sequential: the MLP model
@@ -231,8 +244,10 @@ class GN2(nn.Module):
         ff_dim (int): feed-forward inner dimension (default 512).
         pool_dim (int): output dimension of attention pooling (default 128).
         dropout (float): dropout rate (default 0.0).
-        head_hidden_dims (list[int]): list of hidden layer dimensions for the task heads MLP (default [128, 64, 32]).
-        activation (str): activation function to use in MLPs and transformer (default "relu"). Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus".
+        head_hidden_dims (list[int]): list of hidden layer dimensions for the task heads MLP
+            (default [128, 64, 32]).
+        activation (str): activation function to use in MLPs and transformer (default "relu").
+            Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus".
     """
 
     def __init__(
@@ -248,7 +263,7 @@ class GN2(nn.Module):
         ff_dim           : int  = 512,
         pool_dim         : int  = 128,
         dropout          : float = 0.0,
-        head_hidden_dims : list[int] = [128, 64, 32],
+        head_hidden_dims : list[int] | None = None,
         activation       : str = "relu"
     ):
         """
@@ -257,17 +272,21 @@ class GN2(nn.Module):
         Args:
             n_jet_vars (int): number of jet-level input features.
             n_track_vars (int): number of track-level input features.
-            n_classes (int, optional): number of jet flavour classes (default 4: b, c, light, tau).
-            init_hidden_dim (int, optional): hidden dimension of the per-track initialiser (default 256).
-            init_output_dim (int, optional): output dimension of the per-track initialiser (default
-            embed_dim (int, optional): transformer embedding dimension (default 256).
-            n_heads (int, optional): number of attention heads (default 8).
-            n_layers (int, optional): number of transformer encoder layers (default 4).
-            ff_dim (int, optional): feed-forward inner dimension (default 512).
-            pool_dim (int, optional): output dimension of attention pooling (default 128).
-            dropout (float, optional): dropout rate (default 0.0).
-            head_hidden_dims (list[int], optional): list of hidden layer dimensions for the task heads MLP (default [128, 64, 32]).
-            activation (str, optional): activation function to use in MLPs and transformer (default "relu"). Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus".
+            n_classes (int, optional): number of jet flavour classes. (default 4: b, c, light, tau)
+            init_hidden_dim (int, optional): hidden dimension of the per-track initialiser.
+                (default 256)
+            init_output_dim (int, optional): output dimension of the per-track initialiser.
+                (default 256)
+            embed_dim (int, optional): transformer embedding dimension. (default 256)
+            n_heads (int, optional): number of attention heads. (default 8)
+            n_layers (int, optional): number of transformer encoder layers. (default 4)
+            ff_dim (int, optional): feed-forward inner dimension. (default 512)
+            pool_dim (int, optional): output dimension of attention pooling. (default 128)
+            dropout (float, optional): dropout rate. (default 0.0)
+            head_hidden_dims (list[int], optional): hidden layer dimensions for the task heads MLP
+                (default [128, 64, 32])
+            activation (str, optional): activation function to use in MLPs and transformer.
+                Choose from: "relu", "leakyrelu", "sigmoid", "tanh", "softplus". (default "relu")
         """
         super().__init__()
 
@@ -276,7 +295,7 @@ class GN2(nn.Module):
         self.n_classes        = n_classes
         self.embed_dim        = embed_dim
         self.pool_dim         = pool_dim
-        self.head_hidden_dims = head_hidden_dims
+        self.head_hidden_dims = head_hidden_dims if head_hidden_dims is not None else [128, 64, 32]
 
         in_dim = n_jet_vars + n_track_vars   # combined per-track input
 
@@ -293,7 +312,13 @@ class GN2(nn.Module):
 
         # 2. Transformer encoder ("n_layers" layers, "n_heads" heads, pre-norm)
         self.transformer = nn.ModuleList([
-            TransformerLayer(embed_dim, n_heads, ff_dim, dropout, activation) for _ in range(n_layers)
+            TransformerLayer(
+                embed_dim,
+                n_heads,
+                ff_dim,
+                dropout,
+                activation
+            ) for _ in range(n_layers)
         ])
         self.final_norm = nn.LayerNorm(embed_dim)   # post-encoder norm
 
@@ -304,12 +329,12 @@ class GN2(nn.Module):
         self.pool = AttentionPooling(pool_dim)
 
         # 5. Task heads (3 hidden layers: 128 -> 64 -> 32)
-        self.jet_head = _mlp(pool_dim, head_hidden_dims, n_classes, activation)
+        self.jet_head = _mlp(pool_dim, self.head_hidden_dims, n_classes, activation)
 
-        n_params = sum(p.numel() for p in self.parameters() if p.requires_grad)     # count all trainable parameters
-        logger.info(
-            f"GN2 initialised - embed={embed_dim}, layers={n_layers}, heads={n_heads}, ff={ff_dim}  |  params: {n_params:,}"
-        )
+        # count all trainable parameters
+        n_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        logger.info("GN2 initialised - embed=%s, layers=%s, heads=%s, ff=%s  |  params: %s",
+                    embed_dim, n_layers, n_heads, ff_dim, f"{n_params:,}")
 
     def forward(
         self,
@@ -329,11 +354,14 @@ class GN2(nn.Module):
             dict with keys:
               "jet_outputs" : (torch.Tensor): shape (B, n_classes)
         """
-        _, T, _ = track_features.shape
+        _, num_tracks, _ = track_features.shape
 
         # 1. Concatenate jet features (broadcast) with track features
-        jet_expanded = jet_features.unsqueeze(1).expand(-1, T, -1)          # (B, T, J), unsqueeze jet features to (B, 1, J) and expand to (B, T, J) to concatenate with track features (-1 means "keep original size")
-        combined     = torch.cat([jet_expanded, track_features], dim=-1)    # (B, T, J+K), concatenate along feature dimension
+        # unsqueeze jet features to (B, 1, J) and expand to (B, T, J) to
+        # concatenate with track features (-1 = "keep original size")
+        jet_expanded = jet_features.unsqueeze(1).expand(-1, num_tracks, -1)   # (B, T, J)
+        # concatenate along feature dimension
+        combined     = torch.cat([jet_expanded, track_features], dim=-1)      # (B, T, J+K)
 
         # 2. Per-track initialisation
         x = self.track_init(combined)
@@ -378,7 +406,7 @@ class GN2(nn.Module):
         self.eval()
         out = self.forward(jet_features, track_features, mask)
         return torch.softmax(out["jet_outputs"], dim=-1)
-    
+
     @torch.no_grad()
     def discriminant_db(
         self,
@@ -406,7 +434,7 @@ class GN2(nn.Module):
         """
         label_map = label_map if label_map is not None else FLAVOUR_LABELS
         if not all(k in label_map for k in ["b-jet", "c-jet", "light-jet", "tau-jet"]):
-            raise ValueError(f"label_map must contain: {["b-jet", "c-jet", "light-jet", "tau-jet"]}")
+            raise ValueError("label_map must contain: ['b-jet', 'c-jet', 'light-jet', 'tau-jet']")
         proba = self.predict_proba(jet_features, track_features, mask)
         pb   = proba[:, label_map["b-jet"]]
         pc   = proba[:, label_map["c-jet"]]
@@ -414,7 +442,7 @@ class GN2(nn.Module):
         ptau = proba[:, label_map["tau-jet"]]
         denom = fc * pc + ftau * ptau + (1 - fc - ftau) * pu
         return torch.log((pb / denom).clamp(min=1e-8))
-    
+
     @torch.no_grad()
     def discriminant_dc(
         self,
@@ -442,7 +470,7 @@ class GN2(nn.Module):
         """
         label_map = label_map if label_map is not None else FLAVOUR_LABELS
         if not all(k in label_map for k in ["b-jet", "c-jet", "light-jet", "tau-jet"]):
-            raise ValueError(f"label_map must contain: {["b-jet", "c-jet", "light-jet", "tau-jet"]}")
+            raise ValueError("label_map must contain: ['b-jet', 'c-jet', 'light-jet', 'tau-jet']")
         proba = self.predict_proba(jet_features, track_features, mask)
         pb   = proba[:, label_map["b-jet"]]
         pc   = proba[:, label_map["c-jet"]]

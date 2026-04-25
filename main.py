@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from src.transformer_jet_tagging import utils
-from src.transformer_jet_tagging.dataset import GN2DataLoader, GN2Dataset
+from src.transformer_jet_tagging.dataset import gn2_dataloader, GN2Dataset
 from src.transformer_jet_tagging.model import GN2
 from src.transformer_jet_tagging.train import train
 
@@ -73,7 +73,9 @@ if __name__ == "__main__":
 
     for path in artifacts_dir:
         if not path.exists():
-            raise FileNotFoundError(f"Preprocessing artifact not found: {path}\nRun preprocess.py first.")
+            raise FileNotFoundError(
+                f"Preprocessing artifact not found: {path}\nRun preprocess.py first."
+            )
 
     train_indices = np.load(artifacts_dir[0])
     val_indices   = np.load(artifacts_dir[1])
@@ -81,20 +83,37 @@ if __name__ == "__main__":
 
     if debug_frac < 1.0:
         rng = np.random.default_rng(seed=42)
-        train_indices = rng.choice(train_indices, size=int(len(train_indices) * debug_frac), replace=False)
-        val_indices   = rng.choice(val_indices,   size=int(len(val_indices)   * debug_frac), replace=False)
-        test_indices  = rng.choice(test_indices,  size=int(len(test_indices)  * debug_frac), replace=False)
+        train_indices = rng.choice(
+            train_indices,
+            size=int(len(train_indices) * debug_frac),
+            replace=False
+        )
+        val_indices   = rng.choice(
+            val_indices,
+            size=int(len(val_indices) * debug_frac),
+            replace=False
+        )
+        test_indices  = rng.choice(
+            test_indices,
+            size=int(len(test_indices) * debug_frac),
+            replace=False
+        )
 
-        logger.info(f"Debug mode: {debug_frac:.1%} dei dati")
-    
+        logger.info("Debug mode: %.1f%% dei dati", debug_frac * 100)
+
     train_indices = np.sort(train_indices)
     val_indices   = np.sort(val_indices)
     test_indices  = np.sort(test_indices)
 
-    with open(norm_path) as f:
+    with open(norm_path, encoding="utf-8") as f:
         norm_stats = {k: np.array(v) for k, v in json.load(f).items()}
 
-    logger.info(f"Train={len(train_indices):,}, Val={len(val_indices):,}, Test={len(test_indices):,}")
+    logger.info(
+        "Train=%d, Val=%d, Test=%d",
+        f"{len(train_indices):,}",
+        f"{len(val_indices):,}",
+        f"{len(test_indices):,}",
+    )
 
     # 2. initialize datasets and dataloaders
     common_kwargs = dict(
@@ -117,19 +136,19 @@ if __name__ == "__main__":
     val_dataset   = GN2Dataset(indices=val_indices,   **common_kwargs)
     test_dataset  = GN2Dataset(indices=test_indices,  **common_kwargs)
 
-    train_loader = GN2DataLoader(train_dataset, **loader_kwargs, shuffle=shuffle_var)
-    val_loader   = GN2DataLoader(val_dataset,   **loader_kwargs, shuffle=False)
-    test_loader  = GN2DataLoader(test_dataset,  **loader_kwargs, shuffle=False)
+    train_loader = gn2_dataloader(train_dataset, **loader_kwargs, shuffle=shuffle_var)
+    val_loader   = gn2_dataloader(val_dataset,   **loader_kwargs, shuffle=False)
+    test_loader  = gn2_dataloader(test_dataset,  **loader_kwargs, shuffle=False)
 
     batch = next(iter(train_loader))
-    logger.debug(f"Jets shape:   {batch['jet_features'].shape}")
-    logger.debug(f"Tracks shape: {batch['track_features'].shape}")
-    logger.debug(f"Labels shape: {batch['label'].shape}")
+    logger.debug("Jets shape:   %s", batch['jet_features'].shape)
+    logger.debug("Tracks shape: %s", batch['track_features'].shape)
+    logger.debug("Labels shape: %s", batch['label'].shape)
 
     if config["output"].get("save_plots", False):
 
         from src.transformer_jet_tagging.plotting import make_all_plots
-        
+
         make_all_plots(
             file_path       = file_path,
             jet_vars        = jet_vars,
@@ -144,7 +163,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model_config = config.get("model", {})
-    GN2_model = GN2(
+    gn2_model = GN2(
         n_jet_vars       = len(jet_vars),
         n_track_vars     = len(track_vars),
         n_classes        = len(label_map),
@@ -160,8 +179,8 @@ if __name__ == "__main__":
         activation       = model_config.get("activation", None),
     ).to(device)
 
-    GN2_model = train(
-        model        = GN2_model,
+    gn2_model = train(
+        model        = gn2_model,
         train_loader = train_loader,
         val_loader   = val_loader,
         config       = config,

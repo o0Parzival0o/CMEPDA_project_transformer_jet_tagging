@@ -10,12 +10,14 @@ from src.transformer_jet_tagging.utils import compute_normalization_stats, load_
 
 def test_compute_norm_stats_minimal(fake_hdf5_file):
 
+    rng = np.random.default_rng()
+
     with h5py.File(fake_hdf5_file, "a") as f:
         f["jets"]["pt"][:]    = np.arange(1, 11)
         f["jets"]["eta"][:]   = np.ones(10)
 
-        f["tracks"]["x"][:] = np.random.randn(10, 5)
-        f["tracks"]["y"][:] = np.random.randn(10, 5)
+        f["tracks"]["x"][:] = rng.standard_normal((10, 5))
+        f["tracks"]["y"][:] = rng.standard_normal((10, 5))
         f["tracks"]["valid"][:] = np.ones((10, 5))
 
     stats = compute_normalization_stats(
