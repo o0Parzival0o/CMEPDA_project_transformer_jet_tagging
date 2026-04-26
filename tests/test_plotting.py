@@ -1,16 +1,17 @@
-import numpy as np
-import h5py
-from pathlib import Path
-import pytest
 
+import h5py
+import numpy as np
+import pytest
 from src.transformer_jet_tagging.plotting import (
     _load_jet_data,
     _load_track_data,
-    plot_jet_variables,
-    plot_track_variables,
     plot_correlations,
+    plot_jet_variables,
     plot_learning_curves,
+    plot_track_variables,
 )
+
+rng = np.random.default_rng(seed=42)
 
 
 def fill_fake_data(file_path):
@@ -90,9 +91,9 @@ def test_load_track_data(fake_hdf5_file):
 def test_plot_jet_variables(tmp_path):
 
     jet_data = {
-        "pt": np.random.rand(100),
-        "eta": np.random.rand(100),
-        "label": np.random.randint(0, 3, 100),
+        "pt": rng.random(100),
+        "eta": rng.random(100),
+        "label": rng.integers(0, 3, 100),
     }
 
     plot_jet_variables(jet_data, ["pt", "eta"], tmp_path)
@@ -103,9 +104,9 @@ def test_plot_jet_variables(tmp_path):
 def test_plot_track_variables(tmp_path):
 
     track_data = {
-        "x": np.random.rand(200),
-        "y": np.random.rand(200),
-        "label": np.random.randint(0, 3, 200),
+        "x": rng.random(200),
+        "y": rng.random(200),
+        "label": rng.integers(0, 3, 200),
     }
 
     plot_track_variables(track_data, ["x", "y"], tmp_path)
@@ -116,13 +117,13 @@ def test_plot_track_variables(tmp_path):
 def test_plot_correlations(tmp_path):
 
     jet_data = {
-        "pt": np.random.rand(100),
-        "eta": np.random.rand(100),
+        "pt": rng.random(100),
+        "eta": rng.random(100),
     }
 
     track_data = {
-        "x": np.random.rand(200),
-        "y": np.random.rand(200),
+        "x": rng.random(200),
+        "y": rng.random(200),
     }
 
     plot_correlations(
@@ -203,8 +204,8 @@ def test_nan_handling_in_correlations(tmp_path):
     }
 
     track_data = {
-        "x": np.random.rand(10),
-        "y": np.random.rand(10),
+        "x": rng.random(10),
+        "y": rng.random(10),
     }
 
     plot_correlations(
