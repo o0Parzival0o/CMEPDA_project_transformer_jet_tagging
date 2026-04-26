@@ -99,7 +99,7 @@ if __name__ == "__main__":
             replace=False
         )
 
-        logger.info("Debug mode: %.1f%% dei dati", debug_frac * 100)
+        logger.info("Debug mode: %s dei dati", f"{debug_frac:.1%}")
 
     train_indices = np.sort(train_indices)
     val_indices   = np.sort(val_indices)
@@ -117,13 +117,13 @@ if __name__ == "__main__":
 
     # 2. initialize datasets and dataloaders
     common_kwargs = dict(
-        file_path       = file_path,
-        n_tracks        = config["data"].get("max_tracks", 40),
+        h5_file_path    = file_path,
+        max_tracks      = config["data"].get("max_tracks", 40),
         jet_vars        = jet_vars,
         track_vars      = track_vars,
         jet_flavour     = label_vars,
         jet_flavour_map = label_map,
-        norm_stats      = norm_stats,
+        stats           = norm_stats,
     )
     loader_kwargs = dict(
         batch_size  = batch_size,
@@ -132,9 +132,9 @@ if __name__ == "__main__":
         drop_last   = config["data"].get("drop_last", False),
     )
 
-    train_dataset = GN2Dataset(indices=train_indices, **common_kwargs)
-    val_dataset   = GN2Dataset(indices=val_indices,   **common_kwargs)
-    test_dataset  = GN2Dataset(indices=test_indices,  **common_kwargs)
+    train_dataset = GN2Dataset(jet_indices=train_indices, **common_kwargs)
+    val_dataset   = GN2Dataset(jet_indices=val_indices,   **common_kwargs)
+    test_dataset  = GN2Dataset(jet_indices=test_indices,  **common_kwargs)
 
     train_loader = gn2_dataloader(train_dataset, **loader_kwargs, shuffle=shuffle_var)
     val_loader   = gn2_dataloader(val_dataset,   **loader_kwargs, shuffle=False)

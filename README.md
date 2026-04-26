@@ -1,12 +1,14 @@
 # GN2 Jet Flavour Tagger
 
-[![CI](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/tests.yml/badge.svg)](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/ci.yml)
-[![Docs](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/docs.yml/badge.svg)](https://lucanasini.github.io/CMEPDA_project_transformer_jet_tagging/)
+![License](https://img.shields.io/github/license/USER/REPO)
+[![CI](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/ci.yml/badge.svg)](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/ci.yml)
+[![Docs](https://github.com/lucanasini/CMEPDA_project_transformer_jet_tagging/actions/workflows/docs.yml/badge.svg)](https://github.com/CMEPDA_project_transformer_jet_tagging/actions/workflows/docs.yml)
+[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://lucanasini.github.io/CMEPDA_project_transformer_jet_tagging/)
+
 ![pytorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch)
 ![model](https://img.shields.io/badge/model-transformer-orange)
 ![cuda](https://img.shields.io/badge/CUDA-11.8-green)
 ![cuda](https://img.shields.io/badge/CUDA-12.1-green)
-![license](https://img.shields.io/github/license/USER/REPO)
 ![CI](https://img.shields.io/github/actions/workflow/status/USER/REPO/workflow.yml)
 ![coverage](https://img.shields.io/codecov/c/github/USER/REPO)
 ![PyPI](https://img.shields.io/pypi/v/packagename)
@@ -40,7 +42,7 @@ CMEPDA_project_transformer_jet_tagging/
 │   ├── plotting.py                 ← plotting functions (variables distributions and correlations, learning curves)
 │   └── utils.py                    ← utility functions
 ├── tests/                          ← unit tests
-│   ├── conftest.py                 ← package init
+│   ├── conftest.py
 │   ├── test_dataset.py
 │   ├── test_model.py
 │   ├── test_train.py

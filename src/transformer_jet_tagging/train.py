@@ -379,7 +379,7 @@ if __name__ == "__main__":
     num_workers     = cfg_training.get("num_workers", 0)
 
     loader_kwargs = dict(
-        bs          = batch_size,
+        batch_size  = batch_size,
         num_workers = num_workers,
         pin_memory  = torch.cuda.is_available(),
     )

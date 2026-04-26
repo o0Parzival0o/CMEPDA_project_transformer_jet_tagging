@@ -193,8 +193,8 @@ class GN2Dataset(Dataset):
             and len(self.stats["jet_mu"])    >= 2
             and len(self.stats["jet_sigma"]) >= 2
         ):
-            jet_pt_log = (jet_pt_log - self.stats["jet_mu"][0])/self.stats["jet_sigma"][0]
-            jet_eta    = (jet_eta    - self.stats["jet_mu"][1])/self.stats["jet_sigma"][1]
+            jet_pt_log = (jet_pt_log - self.stats["jet_mu"][0]) / self.stats["jet_sigma"][0]
+            jet_eta    = (jet_eta    - self.stats["jet_mu"][1]) / self.stats["jet_sigma"][1]
 
         return np.stack([jet_pt_log, jet_eta], axis=1)  # (n, 2)
 
@@ -481,7 +481,7 @@ class _BatchCollator:
 
 def gn2_dataloader(
     dataset: GN2Dataset,
-    bs: int,
+    batch_size: int,
     shuffle: bool = False,
     num_workers: int = 0,
     pin_memory: bool = False,
@@ -492,7 +492,7 @@ def gn2_dataloader(
 
     Args:
         dataset (GN2Dataset): dataset instance with sorted indices.
-        bs (int): number of jets per batch.
+        batch_size (int): number of jets per batch.
         shuffle (bool): whether to shuffle the order of batches.
         num_workers (int): DataLoader worker processes.
         pin_memory (bool): pin CPU tensors for faster GPU transfer.
@@ -503,7 +503,7 @@ def gn2_dataloader(
     """
     index_dataset = _IndexDataset(dataset)          # only for iteration purpose (no data)
     sampler       = RandomSampler(index_dataset) if shuffle else SequentialSampler(index_dataset)
-    batch_sampler = BatchSampler(sampler, batch_size=bs, drop_last=drop_last)
+    batch_sampler = BatchSampler(sampler, batch_size=batch_size, drop_last=drop_last)
     collator      = _BatchCollator(dataset)         # read data
 
     return DataLoader(
@@ -543,7 +543,7 @@ if __name__ == "__main__":
     n_tracks   = config["data"].get("max_tracks", 40)
     train_frac = config["data"].get("train_fraction", 0.7)
     seed       = config["data"].get("split_seed", 42)
-    batch_size = config["data"].get("batch_size", 1024)
+    bs         = config["data"].get("batch_size", 1024)
 
     try:
         with h5py.File(file_path, "r") as h5_file:
@@ -564,7 +564,8 @@ if __name__ == "__main__":
     train_indices = np.sort(train_indices)
     test_indices  = np.sort(test_indices)
     logger.info("Split - train: %s  test: %s",
-                f"{len(train_indices):,}", f"{len(train_indices):,}")
+                f"{len(train_indices):,}",
+                f"{len(train_indices):,}")
 
     logger.info("Computing normalization statistics on training set ...")
     norm_stats = compute_normalization_stats(file_path, train_indices)
@@ -607,7 +608,7 @@ if __name__ == "__main__":
 
     # batch loader speed test
     logger.info("=== Batch loader test (BatchCollator) ===")
-    train_loader = gn2_dataloader(train_dataset, bs=batch_size, shuffle=True)
+    train_loader = gn2_dataloader(train_dataset, batch_size=bs, shuffle=True)
     t0    = time.perf_counter()
     batch = next(iter(train_loader))
     dt    = time.perf_counter() - t0
