@@ -260,6 +260,7 @@ def train(
     best_val_loss   = float("inf")
     checkpoint_path = output_dir / "best_model.pt"
 
+    history = {"train_loss": [], "val_loss": [], "lr": []}
     for epoch in range(1, n_epochs + 1):
 
         train_losses = run_epoch(model, train_loader, loss, optimiser,
@@ -268,6 +269,10 @@ def train(
                                  lr_decay, device, is_train=False)
 
         lr_now = lr_decay.get_last_lr()[0]
+
+        history["train_loss"].append(train_losses["total"])
+        history["val_loss"].append(val_losses["total"])
+        history["lr"].append(lr_now)
 
         logger.info("Epoch %s/%s | train loss=%s (jet=%s) | val=%s | lr=%s",
                     f"{epoch:4d}", n_epochs, f"{train_losses['total']:.4f}",
@@ -298,7 +303,8 @@ def train(
     model.load_state_dict(
         torch.load(checkpoint_path, map_location=device, weights_only=True)["model_state"]
     )
-    return model
+
+    return model, history
 
 
 if __name__ == "__main__":

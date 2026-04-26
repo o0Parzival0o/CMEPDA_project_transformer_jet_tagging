@@ -73,7 +73,7 @@ def test_process_jet_no_norm():
 def test_process_tracks_padding_mask():
 
     ds = GN2Dataset.__new__(GN2Dataset)
-    ds.max_tracks    = 5
+    ds.max_tracks  = 5
     ds.track_vars  = ["x", "y"]
     ds.jet_vars    = ["pt", "eta"],
     ds.jet_flavour = "label"

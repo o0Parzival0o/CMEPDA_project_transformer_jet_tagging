@@ -17,7 +17,7 @@ from src.transformer_jet_tagging.model import GN2
 from src.transformer_jet_tagging.train import train
 
 logging.basicConfig(
-    level  = logging.INFO,
+    level  = logging.DEBUG,
     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("GN2")
@@ -109,7 +109,7 @@ if __name__ == "__main__":
         norm_stats = {k: np.array(v) for k, v in json.load(f).items()}
 
     logger.info(
-        "Train=%d, Val=%d, Test=%d",
+        "Train=%s, Val=%s, Test=%s",
         f"{len(train_indices):,}",
         f"{len(val_indices):,}",
         f"{len(test_indices):,}",
@@ -150,12 +150,12 @@ if __name__ == "__main__":
         from src.transformer_jet_tagging.plotting import make_all_plots
 
         make_all_plots(
-            file_path       = file_path,
+            h5_path         = file_path,
             jet_vars        = jet_vars,
             track_vars      = track_vars,
             jet_flavour     = label_vars,
             jet_flavour_map = label_map,
-            indices         = train_indices,
+            jet_indices     = train_indices,
             output_dir      = config["output"].get("plot_dir", "outputs/plots"),
             n_jets_track    = int(len(train_indices)*0.1),
         )
@@ -179,7 +179,7 @@ if __name__ == "__main__":
         activation       = model_config.get("activation", None),
     ).to(device)
 
-    gn2_model = train(
+    gn2_model, history = train(
         model        = gn2_model,
         train_loader = train_loader,
         val_loader   = val_loader,
@@ -187,3 +187,29 @@ if __name__ == "__main__":
         output_dir   = Path(config["output"].get("checkpoints_dir", "outputs/checkpoints")),
         device       = device
     )
+
+    if config["output"].get("plot_roc", False):
+
+        from src.transformer_jet_tagging.plotting import (
+            plot_learning_curves,
+            plot_roc_db,
+            plot_roc_dc,
+        )
+
+        plot_learning_curves(
+            history,
+            output_dir = Path(config["output"]["plots_dir"]),
+        )
+
+        plot_roc_db(
+            model      = gn2_model,
+            loader     = val_loader,
+            device     = device,
+            output_dir = Path(config["output"]["plots_dir"]),
+        )
+        plot_roc_dc(
+            model      = gn2_model,
+            loader     = val_loader,
+            device     = device,
+            output_dir = Path(config["output"]["plots_dir"]),
+        )
