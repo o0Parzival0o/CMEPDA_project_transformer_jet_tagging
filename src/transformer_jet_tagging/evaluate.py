@@ -1,19 +1,22 @@
 """
 evaluate.py
 ===========
-Evaluation script for GN2.
+Evaluation script for the GN2 jet flavour tagging pipeline.
 
-Produces:
-  1. ROC curves  — b-jet efficiency vs c/light/tau-jet rejection
-  2. D_b discriminant distributions per flavour
-  3. Rejection at standard operating points (65, 70, 77, 85, 90% b-eff)
-  4. Confusion matrix on jet classification
-  5. Per-flavour accuracy
+Computes classification metrics, ROC curves (D_b and D_c), and optionally
+saves a confusion matrix and per-class score distributions.
 
-All plots are saved under config["output"]["eval_dir"].
+Outputs:
+  Directory specified in ``config["output"]["eval_dir"]`` (default: ``outputs/eval``):
 
-Usage:
-    python evaluate.py --config configs/config.json --checkpoint outputs/checkpoints/best_model.pt
+  .. code-block:: text
+
+      outputs/eval/
+      ├── metrics.json            - accuracy, per-class precision/recall/F1
+      ├── confusion_matrix.pdf    - normalised confusion matrix
+      ├── score_distributions.pdf - softmax score distributions per class
+      ├── roc_db.pdf              - b-tagging ROC (D_b)
+      └── roc_dc.pdf              - c-tagging ROC (D_c)
 """
 
 import argparse
@@ -22,289 +25,424 @@ import logging
 from pathlib import Path
 
 import matplotlib
+import matplotlib.pyplot as plt
+import mplhep as hep
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+)
+
+from transformer_jet_tagging import utils
+from transformer_jet_tagging.constants import FLAVOUR_COLORS
+from transformer_jet_tagging.dataset import GN2Dataset, gn2_dataloader
+from transformer_jet_tagging.model import GN2
+from transformer_jet_tagging.plotting import plot_roc_db, plot_roc_dc
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, roc_curve
-from torch.utils.data import DataLoader
+hep.style.use(hep.style.ATLAS)##########################################################################################################################3
 
-from .dataset import GN2Dataset
-from .model import GN2
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
-    level  = logging.INFO,
-    format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("GN2.evaluate")
 
-# Standard b-tagging operating points used by ATLAS
-B_TAG_OPS = [0.65, 0.70, 0.77, 0.85, 0.90]
-
-# class index → flavour name  (matches JET_FLAVOUR_MAP in dataset.py)
-FLAVOUR_NAMES = {0: "light", 1: "c", 2: "b", 3: "tau"}
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+@torch.no_grad()
+def run_inference(
+    model: GN2,
+    loader: DataLoader,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Run the model over the full loader and collect outputs.
 
-def load_model(checkpoint_path: str, device: torch.device) -> tuple[GN2, dict]:
-    """Load GN2 from a checkpoint saved by train.py."""
-    ckpt   = torch.load(checkpoint_path, map_location=device)
-    config = ckpt["config"]
+    Args:
+        model (GN2): trained GN2 model in eval mode.
+        loader (DataLoader): test set DataLoader.
+        device (torch.device): torch device.
 
-    jet_vars   = config["data"]["jet_features"]
-    track_vars = config["data"]["track_features"]
-    model_cfg  = config.get("model", {})
-
-    model = GN2(
-        n_jet_vars    = len(jet_vars),
-        n_track_vars  = len(track_vars),
-        n_classes     = model_cfg.get("n_classes", 4),
-        n_track_origin= model_cfg.get("n_track_origin", 7),
-        embed_dim     = model_cfg.get("embed_dim", 256),
-        n_heads       = model_cfg.get("n_heads", 8),
-        n_layers      = model_cfg.get("n_layers", 4),
-        ff_dim        = model_cfg.get("ff_dim", 512),
-        pool_dim      = model_cfg.get("pool_dim", 128),
-        dropout       = 0.0,
-    ).to(device)
-
-    model.load_state_dict(ckpt["model_state"])
+    Returns:
+        proba (np.ndarray): shape (N, n_classes), softmax probabilities.
+        preds (np.ndarray): shape (N,), argmax class predictions.
+        labels (np.ndarray): shape (N,), true class labels.
+    """
     model.eval()
-    logger.info(f"Loaded checkpoint (epoch {ckpt['epoch']}, val_loss={ckpt['val_loss']:.4f})")
-    return model, config
+
+    all_prob, all_labels = [], []
+
+    for batch in loader:
+        jet_feats   = batch["jet_features"].to(device)
+        track_feats = batch["track_features"].to(device)
+        mask        = batch["mask"].to(device)
+
+        prob = model.predict_proba(jet_feats, track_feats, mask)
+        all_prob.append(prob.cpu().numpy())
+        all_labels.append(batch["label"].numpy())
+
+    prob   = np.concatenate(all_prob,  axis=0)
+    labels = np.concatenate(all_labels, axis=0)
+    preds  = prob.argmax(axis=1)
+
+    # drop jets with label == -1 (unmapped)
+    valid = labels != -1
+    if not valid.all():
+        n_dropped = int((~valid).sum())
+        logger.warning("Dropping %s jets with unmapped label (-1).", n_dropped)
+    prob   = prob[valid]
+    preds  = preds[valid]
+    labels = labels[valid]
+
+    return prob, preds, labels
 
 
-def collect_predictions(
-    model  : GN2,
-    loader : DataLoader,
-    device : torch.device,
-    fc     : float = 0.2,
-    ftau   : float = 0.05,
+def compute_metrics(
+    preds: np.ndarray,
+    labels: np.ndarray,
+    label_map: dict[int, str],
+    output_dir: Path,
 ) -> dict:
     """
-    Run inference on the full loader and collect:
-      - proba      : (N, 4)   softmax probabilities
-      - db         : (N,)     b-tagging discriminant D_b
-      - labels     : (N,)     true jet flavour labels
+    Compute and save classification metrics (accuracy, per-class P/R/F1).
+
+    Args:
+        preds (np.ndarray): shape (N,), predicted class indices.
+        labels (np.ndarray): shape (N,), true class indices.
+        label_map (dict): mapping from class index (int) to class name (str).
+        output_dir (Path): directory where metrics.json is saved.
+
+    Returns:
+        dict: metrics dictionary (also written to metrics.json).
     """
-    all_proba  = []
-    all_db     = []
-    all_labels = []
+    # invert label_map: index -> name
+    idx_to_name = {v: k for k, v in label_map.items()}
+    class_names = [idx_to_name.get(i, str(i)) for i in sorted(set(labels))]
 
-    with torch.no_grad():
-        for batch in loader:
-            jet_f  = batch["jet_features"].to(device)
-            trk_f  = batch["track_features"].to(device)
-            mask   = batch["mask"].to(device)
-            labels = batch["label"]
+    acc = accuracy_score(labels, preds)
+    report = classification_report(
+        labels, preds,
+        target_names=class_names,
+        output_dict=True,
+        zero_division=0,
+    )
 
-            proba = model.predict_proba(jet_f, trk_f, mask)   # (B, 4)
-            db    = model.discriminant_db(jet_f, trk_f, mask, fc=fc, ftau=ftau)
-
-            all_proba.append(proba.cpu().numpy())
-            all_db.append(db.cpu().numpy())
-            all_labels.append(labels.numpy())
-
-    return {
-        "proba" : np.concatenate(all_proba,  axis=0),
-        "db"    : np.concatenate(all_db,     axis=0),
-        "labels": np.concatenate(all_labels, axis=0),
+    metrics = {
+        "accuracy": float(acc),
+        "per_class": {
+            cls: {
+                "precision": report[cls]["precision"],
+                "recall":    report[cls]["recall"],
+                "f1-score":  report[cls]["f1-score"],
+                "support":   int(report[cls]["support"]),
+            }
+            for cls in class_names if cls in report
+        },
+        "macro avg":    report.get("macro avg",    {}),
+        "weighted avg": report.get("weighted avg", {}),
     }
 
+    out_path = output_dir / "metrics.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=4)
 
-# ---------------------------------------------------------------------------
-# Plotting functions
-# ---------------------------------------------------------------------------
+    logger.info("Test accuracy: %.4f", acc)
+    logger.info("Metrics saved to %s", out_path)
 
-def plot_discriminant(db: np.ndarray, labels: np.ndarray, save_path: Path) -> None:
-    """D_b distributions per flavour."""
-    fig, ax = plt.subplots(figsize=(7, 5))
-    flavours = [(2, "b-jets", "royalblue"), (1, "c-jets", "darkorange"), (0, "light-jets", "green")]
-    for cls, name, color in flavours:
-        mask = labels == cls
-        ax.hist(db[mask], bins=60, range=(-10, 15), histtype="step",
-                lw=2, label=name, color=color, density=True)
-    ax.set_xlabel(r"$D_b$", fontsize=13)
-    ax.set_ylabel("Density", fontsize=13)
-    ax.legend(fontsize=12)
-    ax.set_title("GN2 b-tagging discriminant")
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
-    plt.close(fig)
-    logger.info(f"Saved discriminant plot → {save_path}")
+    for cls in class_names:
+        m = metrics["per_class"].get(cls, {})
+        logger.info(
+            "  %-15s  prec=%.4f  rec=%.4f  f1=%.4f  n=%s",
+            cls,
+            m.get("precision", 0.),
+            m.get("recall",    0.),
+            m.get("f1-score",  0.),
+            f"{m.get('support', 0):,}",
+        )
+
+    return metrics
 
 
-def plot_roc(db: np.ndarray, labels: np.ndarray, save_path: Path) -> None:
+def plot_confusion_matrix(
+    preds: np.ndarray,
+    labels: np.ndarray,
+    label_map: dict[int, str],
+    output_dir: Path,
+) -> None:
     """
-    Background rejection vs b-jet efficiency (ROC) for c-jets and light-jets.
-    Mirrors Fig. 2 of the paper.
+    Plot and save the normalised confusion matrix.
+
+    Args:
+        preds (np.ndarray): shape (N,), predicted class indices.
+        labels (np.ndarray): shape (N,), true class indices.
+        label_map (dict): mapping from class index (int) to class name (str).
+        output_dir (Path): directory where the PDF is saved.
     """
-    fig, ax = plt.subplots(figsize=(7, 5))
+    idx_to_name = {v: k for k, v in label_map.items()}
+    class_indices = sorted(set(labels))
+    class_names   = [idx_to_name.get(i, str(i)) for i in class_indices]
 
-    b_mask = labels == 2
-    for bg_cls, name, color, ls in [
-        (1, "c-jets",     "darkorange", "-"),
-        (0, "light-jets", "green",      "-."),
-    ]:
-        bg_mask = labels == bg_cls
-        y_true  = np.concatenate([np.ones(b_mask.sum()), np.zeros(bg_mask.sum())])
-        y_score = np.concatenate([db[b_mask], db[bg_mask]])
-        fpr, tpr, _ = roc_curve(y_true, y_score)
-        # rejection = 1 / fpr  (avoid division by zero)
-        valid = fpr > 0
-        ax.plot(tpr[valid], 1.0 / fpr[valid], color=color, ls=ls,
-                lw=2, label=f"{name} rejection")
+    cm = confusion_matrix(labels, preds, labels=class_indices, normalize="true")
 
-    # Mark standard operating points on the b-axis
-    for op in B_TAG_OPS:
-        ax.axvline(op, color="grey", lw=0.8, ls=":")
-
-    ax.set_xlabel("b-jet tagging efficiency", fontsize=13)
-    ax.set_ylabel("Background rejection", fontsize=13)
-    ax.set_yscale("log")
-    ax.set_xlim(0.5, 1.0)
-    ax.legend(fontsize=12)
-    ax.set_title("GN2 ROC curves")
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
-    plt.close(fig)
-    logger.info(f"Saved ROC plot → {save_path}")
-
-
-def plot_confusion(proba: np.ndarray, labels: np.ndarray, save_path: Path) -> None:
-    """Normalised confusion matrix."""
-    preds  = proba.argmax(axis=1)
-    names  = [FLAVOUR_NAMES[i] for i in range(4)]
-    cm     = confusion_matrix(labels, preds, normalize="true")
-    disp   = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=names)
     fig, ax = plt.subplots(figsize=(6, 5))
-    disp.plot(ax=ax, colorbar=False, cmap="Blues", values_format=".2f")
-    ax.set_title("GN2 confusion matrix (row-normalised)")
+    im = ax.imshow(cm, vmin=0, vmax=1, cmap="Blues", aspect="auto")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Fraction")
+
+    ax.set_xticks(range(len(class_names)))
+    ax.set_yticks(range(len(class_names)))
+    ax.set_xticklabels(class_names, rotation=30, ha="right", fontsize=11)
+    ax.set_yticklabels(class_names, fontsize=11)
+    ax.set_xlabel("Predicted class", fontsize=13)
+    ax.set_ylabel("True class", fontsize=13)
+
+    for i in range(len(class_names)):
+        for j in range(len(class_names)):
+            val   = cm[i, j]
+            color = "white" if val > 0.55 else "black"
+            ax.text(j, i, f"{val:.3f}", ha="center", va="center",
+                    fontsize=10, color=color)
+
+    hep.atlas.label(ax=ax, data=False, loc=0, rlabel="GN2 evaluation")
     fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
+
+    out = output_dir / "confusion_matrix.pdf"
+    fig.savefig(out)
     plt.close(fig)
-    logger.info(f"Saved confusion matrix → {save_path}")
+    logger.info("Saved: %s", out)
 
 
-def compute_rejections_at_ops(
-    db        : np.ndarray,
-    labels    : np.ndarray,
-    b_eff_ops : list = B_TAG_OPS,
+def plot_score_distributions(
+    proba: np.ndarray,
+    labels: np.ndarray,
+    label_map: dict[int, str],
+    output_dir: Path,
+) -> None:
+    """
+    Plot softmax score distributions for each class, split by true flavour.
+
+    Args:
+        proba (np.ndarray): shape (N, n_classes), softmax probabilities.
+        labels (np.ndarray): shape (N,), true class labels.
+        label_map (dict): mapping from class index (int) to class name (str).
+        output_dir (Path): directory where the PDF is saved.
+    """
+    idx_to_name = {v: k for k, v in label_map.items()}
+    class_indices = sorted(set(labels))
+    class_names   = [idx_to_name.get(i, str(i)) for i in class_indices]
+    n_classes     = len(class_indices)
+
+    fig, axes = plt.subplots(1, n_classes, figsize=(5 * n_classes, 4), sharey=False)
+    if n_classes == 1:
+        axes = [axes]
+
+    for col, (cls_idx, cls_name) in enumerate(zip(class_indices, class_names, strict=False)):
+        ax   = axes[col]
+        bins = np.linspace(0, 1, 50)
+        score_col = class_indices.index(cls_idx)   # column in proba for this class
+
+        for true_idx, true_name in zip(class_indices, class_names, strict=False):
+            mask   = labels == true_idx
+            scores = proba[mask, score_col]
+            color  = FLAVOUR_COLORS.get(true_idx, None)
+            ax.hist(
+                scores,
+                bins=bins,
+                density=True,
+                histtype="step",
+                linewidth=1.6,
+                color=color,
+                label=true_name,
+            )
+
+        ax.set_xlabel(f"P({cls_name})", fontsize=13)
+        ax.set_ylabel("Entries (normalised)", fontsize=12)
+        ax.set_yscale("log")
+        ax.legend(fontsize=10)
+        hep.atlas.label(
+            ax=ax,
+            data=False,
+            loc=1,
+            rlabel=r"$\sqrt{s}=13.6$ TeV, $t\bar{t}$ simulation",
+        )
+
+    fig.tight_layout()
+    out = output_dir / "score_distributions.pdf"
+    fig.savefig(out)
+    plt.close(fig)
+    logger.info("Saved: %s", out)
+
+
+def evaluate(
+    config: dict,
+    checkpoint_path: Path,
+    output_dir: Path,
+    device: torch.device,
+    debug_frac: float = 1.0,
 ) -> dict:
     """
-    For each operating point (b-jet efficiency), compute the threshold
-    and return c-jet and light-jet rejection.
+    Run the full evaluation pipeline on the test set.
+
+    Args:
+        config (dict): full configuration dictionary.
+        checkpoint_path (Path): path to the best model checkpoint (.pt).
+        output_dir (Path): directory where all evaluation outputs are saved.
+        device (torch.device): torch device.
+        debug_frac (float): fraction of test data to use (default 1.0 = all).
+
+    Returns:
+        dict: computed metrics (also written to metrics.json in output_dir).
     """
-    b_mask = labels == 2
-    c_mask = labels == 1
-    l_mask = labels == 0
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    results = {}
-    for op in b_eff_ops:
-        # threshold: the (1-op) percentile of the b-jet discriminant
-        thr = np.percentile(db[b_mask], (1 - op) * 100)
-        c_rej = 1.0 / max((db[c_mask] > thr).mean(), 1e-9)
-        l_rej = 1.0 / max((db[l_mask] > thr).mean(), 1e-9)
-        results[op] = {"threshold": thr, "c_rejection": c_rej, "light_rejection": l_rej}
-        logger.info(
-            f"  OP {op*100:.0f}%  thr={thr:.3f}  "
-            f"c-rej={c_rej:.1f}  light-rej={l_rej:.1f}"
-        )
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def main(config_path: str, checkpoint_path: str, fc: float, ftau: float) -> None:
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Device: {device}")
-
-    # 1. Load model
-    model, config = load_model(checkpoint_path, device)
-
-    # 2. Load preprocessing artifacts
     preprocess_dir = Path(config["output"]["preprocess_dir"])
-    idx_dir   = preprocess_dir / "indices"
-    norm_path = preprocess_dir / "norm_stats.json"
+    idx_dir        = preprocess_dir / "indices"
+    norm_path      = preprocess_dir / "norm_stats.json"
 
-    test_idx   = np.load(idx_dir / "test_indices.npy")
-    with open(norm_path) as f:
+    # load test indices
+    test_indices = np.sort(np.load(idx_dir / "test_indices.npy"))
+
+    if debug_frac < 1.0:
+        rng          = np.random.default_rng(seed=0)
+        test_indices = np.sort(rng.choice(
+            test_indices,
+            size    = int(len(test_indices) * debug_frac),
+            replace = False,
+        ))
+        logger.info("Debug mode: using %.1f%% of test set (%s jets).",
+                    debug_frac * 100, f"{len(test_indices):,}")
+    else:
+        logger.info("Test set size: %s jets.", f"{len(test_indices):,}")
+
+    # normalization stats
+    with open(norm_path, encoding="utf-8") as f:
         norm_stats = {k: np.array(v) for k, v in json.load(f).items()}
 
-    logger.info(f"Test set: {len(test_idx):,} jets")
+    data_config = config["data"]
+    label_map   = {int(k): v for k, v in data_config["label_map"].items()}
 
-    # 3. DataLoader
+    # dataset & loader
     test_dataset = GN2Dataset(
-        file_path       = config["data"]["h5_path"],
-        indices         = test_idx,
-        n_tracks        = config["data"].get("max_tracks", 40),
-        jet_vars        = config["data"]["jet_features"],
-        track_vars      = config["data"]["track_features"],
-        jet_flavour     = config["data"]["label"],
-        jet_flavour_map = config["data"]["label_map"],
-        norm_stats      = norm_stats,
+        h5_file_path    = data_config["h5_path"],
+        jet_indices     = test_indices,
+        max_tracks      = data_config.get("max_tracks", 40),
+        jet_vars        = data_config["jet_features"],
+        track_vars      = data_config["track_features"],
+        jet_flavour     = data_config["label"],
+        jet_flavour_map = label_map,
+        stats           = norm_stats,
     )
-    test_loader = DataLoader(
+
+    training_config = config.get("training", {})
+    test_loader = gn2_dataloader(
         test_dataset,
-        batch_size  = config["training"].get("batch_size", 1024),
+        batch_size  = training_config.get("batch_size", 1024),
         shuffle     = False,
-        num_workers = config["training"].get("num_workers", 4),
+        num_workers = training_config.get("num_workers", 0),
         pin_memory  = torch.cuda.is_available(),
     )
 
-    # 4. Collect predictions
-    logger.info("Running inference on test set …")
-    preds = collect_predictions(model, test_loader, device, fc=fc, ftau=ftau)
+    # load model from checkpoint
+    model = GN2.from_checkpoint(str(checkpoint_path), device)
+    model.eval()
 
-    # 5. Metrics
-    logger.info("--- Rejection at standard operating points ---")
-    rejections = compute_rejections_at_ops(preds["db"], preds["labels"])
+    # inference
+    logger.info("Running inference on test set ...")
+    proba, preds, labels = run_inference(model, test_loader, device)
 
-    acc = (preds["proba"].argmax(1) == preds["labels"]).mean()
-    logger.info(f"Overall jet classification accuracy: {acc:.4f}")
+    # classification metrics
+    metrics = compute_metrics(preds, labels, label_map, output_dir)
 
-    for cls in range(4):
-        mask = preds["labels"] == cls
-        cls_acc = (preds["proba"][mask].argmax(1) == cls).mean()
-        logger.info(f"  {FLAVOUR_NAMES[cls]}-jet accuracy: {cls_acc:.4f}")
+    # plots
+    plot_confusion_matrix(preds, labels, label_map, output_dir)
+    plot_score_distributions(proba, labels, label_map, output_dir)
 
-    # 6. Save plots
-    eval_dir = Path(config["output"].get("eval_dir", "outputs/eval"))
-    eval_dir.mkdir(parents=True, exist_ok=True)
+    if config["output"].get("plot_roc", True):
+        logger.info("Plotting ROC curves ...")
+        plot_roc_db(model=model, loader=test_loader, device=device, output_dir=output_dir)
+        plot_roc_dc(model=model, loader=test_loader, device=device, output_dir=output_dir)
 
-    plot_discriminant(preds["db"],    preds["labels"], eval_dir / "discriminant_Db.png")
-    plot_roc(         preds["db"],    preds["labels"], eval_dir / "roc_curves.png")
-    plot_confusion(   preds["proba"], preds["labels"], eval_dir / "confusion_matrix.png")
+    logger.info("Evaluation complete. Outputs saved to '%s/'.", output_dir)
+    return metrics
 
-    # 7. Save rejection table to JSON
-    rej_path = eval_dir / "rejections_at_ops.json"
-    with open(rej_path, "w") as f:
-        json.dump(
-            {f"{int(op*100)}pct": v for op, v in rejections.items()},
-            f, indent=2
-        )
-    logger.info(f"Saved rejection table → {rej_path}")
-    logger.info("Evaluation complete.")
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="transformer_jet_tagging.evaluate",
+        description="GN2 evaluation on test set",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/config.json",
+        help="Path to the JSON configuration file.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to model checkpoint (.pt). "
+             "Defaults to <checkpoints_dir>/best_model.pt from config.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory where evaluation outputs are saved. "
+             "Defaults to config['output']['eval_dir'] or 'outputs/eval'.",
+    )
+    parser.add_argument(
+        "--debug-frac",
+        type=float,
+        default=1.0,
+        help="Fraction of test data to use (default 1.0 = all).",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device to use: 'cpu', 'cuda', 'cuda:0', etc. "
+             "Defaults to CUDA if available, else CPU.",
+    )
+
+    args = parser.parse_args()
+
+    config = utils.load_config_json(args.config)
+
+    checkpoint_path = Path(
+        args.checkpoint
+        if args.checkpoint is not None
+        else Path(config["output"].get("checkpoints_dir", "outputs/checkpoints")) / "best_model.pt"
+    )
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    output_dir = Path(
+        args.output_dir
+        if args.output_dir is not None
+        else config["output"].get("eval_dir", "outputs/eval")
+    )
+
+    if args.device is not None:
+        device = torch.device(args.device)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    logger.info("Device : %s", device)
+    logger.info("Checkpoint: %s", checkpoint_path)
+    logger.info("Output dir: %s", output_dir)
+
+    evaluate(
+        config          = config,
+        checkpoint_path = checkpoint_path,
+        output_dir      = output_dir,
+        device          = device,
+        debug_frac      = args.debug_frac,
+    )
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GN2 evaluation")
-    parser.add_argument("--config",     type=str, required=True)
-    parser.add_argument("--checkpoint", type=str,
-                        default="outputs/checkpoints/best_model.pt")
-    parser.add_argument("--fc",   type=float, default=0.2,
-                        help="fc parameter for D_b discriminant (default 0.2)")
-    parser.add_argument("--ftau", type=float, default=0.05,
-                        help="ftau parameter for D_b discriminant (default 0.05)")
-    args = parser.parse_args()
-    main(args.config, args.checkpoint, args.fc, args.ftau)
+    main()

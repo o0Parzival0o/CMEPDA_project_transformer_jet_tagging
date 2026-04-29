@@ -158,9 +158,9 @@ def main():
     test_loader  = gn2_dataloader(test_dataset,  **loader_kwargs, shuffle=False)
 
     if config["output"].get("save_plots", False):
-        from src.transformer_jet_tagging.plotting import make_all_plots
+        from src.transformer_jet_tagging.plotting import plot_statistics
 
-        make_all_plots(
+        plot_statistics(
             h5_path         = file_path,
             jet_vars        = jet_vars,
             track_vars      = track_vars,

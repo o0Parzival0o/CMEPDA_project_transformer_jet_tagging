@@ -400,7 +400,7 @@ def plot_correlations(
         logger.info("Saved: %s", out)
 
 
-def make_all_plots(
+def plot_statistics(
     h5_path: str,
     jet_vars: list[str],
     track_vars: list[str],
@@ -688,7 +688,7 @@ if __name__ == "__main__":
         indices = np.sort(rng.choice(indices, size=args.n_jets, replace=False))
     logger.info("Using %s jets for plots.", f"{len(indices):,}")
 
-    make_all_plots(
+    plot_statistics(
         h5_path         = file_path,
         jet_vars        = jet_features,
         track_vars      = track_features,
