@@ -85,10 +85,6 @@
         "preprocess_dir": "outputs/preprocess",
         "save_plots": false,
         "plots_dir": "outputs/plots",
-        "save_best": true,
-        "save_last": true,
-        "checkpoints_dir": "outputs/checkpoints",
-        "plot_roc": true,
-        "eval_dir": "outputs/eval"
+        "checkpoints_dir": "outputs/checkpoints"
     }
 }

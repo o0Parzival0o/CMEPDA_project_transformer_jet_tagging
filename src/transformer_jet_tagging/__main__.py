@@ -12,14 +12,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from transformer_jet_tagging import __version__, utils
-from transformer_jet_tagging.dataset import GN2Dataset, gn2_dataloader
-from transformer_jet_tagging.evaluate import evaluate
-from transformer_jet_tagging.model import GN2
-from transformer_jet_tagging.train import train
+from . import __version__, utils
+from .dataset import GN2Dataset, gn2_dataloader
+from .model import GN2
+from .train import train
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("GN2")
@@ -84,7 +83,7 @@ def main():
     if not all(p.exists() for p in artifacts):
         logger.info("Preprocessing not found: running preprocess")
 
-        from transformer_jet_tagging.preprocess import run_preprocess
+        from .preprocess import run_preprocess
 
         run_preprocess(config_path=config_path)
 
@@ -199,39 +198,17 @@ def main():
     ).to(device)
 
     # training
-    gn2_model, history = train(
+    train(
         model        = gn2_model,
         train_loader = train_loader,
         val_loader   = val_loader,
+        test_loader  = test_loader,
         config       = config,
         output_dir   = Path(config["output"].get("checkpoints_dir", "outputs/checkpoints")),
         device       = device,
     )
 
-    # plots
-    if config["output"].get("plot_roc", False):
-        from transformer_jet_tagging.plotting import (
-            plot_learning_curves,
-            plot_roc_db,
-            plot_roc_dc,
-        )
-
-        out_plot_dir = Path(config["output"]["plots_dir"])
-
-        plot_learning_curves(history.to_dict(), output_dir=out_plot_dir)
-        plot_roc_db(model=gn2_model, loader=val_loader, device=device, output_dir=out_plot_dir)
-        plot_roc_dc(model=gn2_model, loader=val_loader, device=device, output_dir=out_plot_dir)
-
-    # evaluate
-    eval_output_dir = Path(config["output"].get("eval_dir", "outputs/eval"))
-
-    evaluate(
-        config          = config,
-        checkpoint_path = Path(config["output"].get("checkpoints_dir",
-                            "outputs/checkpoints")) / "best_model.pt",
-        output_dir      = eval_output_dir,
-        device          = device,
-    )
+    
 
 
 if __name__ == "__main__":

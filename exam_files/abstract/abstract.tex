@@ -1,0 +1,58 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{parskip}
+
+\geometry{top=2.5cm, bottom=2.5cm, left=3cm, right=3cm}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries GN2: Transformer-Based Jet Flavour Tagging}\\[6pt]
+  {\large A PyTorch Implementation}\\[4pt]
+  {\small Based on: ATLAS Collaboration,
+    \textit{Transforming jet flavour tagging at ATLAS},
+    \textit{Nature Communications} \textbf{17}, 541 (2026)}
+\end{center}
+
+\vspace{8pt}
+\hrule
+\vspace{10pt}
+
+\begin{abstract}
+Jet flavour tagging is the task of classifying hadronic jets produced in
+proton--proton collisions at the Large Hadron Collider according to the flavour
+of their originating parton: bottom quark ($b$), charm quark ($c$), hadronic
+$\tau$-lepton decay, or light quark/gluon.
+This project implements \textbf{GN2}, the transformer-based flavour-tagging
+algorithm deployed by the ATLAS Collaboration for Run~2 and Run~3 data
+analyses, as a standalone, fully configurable PyTorch pipeline.
+
+The implementation covers the complete machine-learning workflow.
+Jet and track variables are read from HDF5 simulation files via a batched,
+I/O-optimised data loader that exploits sorted index access for contiguous
+reads.
+A preprocessing stage applies kinematic selection cuts, performs a
+stratified train/val/test split, and computes Z-score normalisation
+statistics exclusively on the training set to prevent data leakage.
+The GN2 model processes each jet through a per-track initialiser network,
+a four-layer transformer encoder with pre-LayerNorm and eight attention heads,
+an attention-pooling step that produces a single global jet representation,
+and a classification head that outputs four class probabilities
+$(p_b, p_c, p_u, p_\tau)$.
+Training uses the AdamW optimiser with a linear-warmup and cosine-annealing
+learning-rate schedule, reproducing the published ATLAS training recipe.
+Evaluation produces standard classification metrics, a normalised confusion
+matrix, per-class score distributions, and ROC curves for the $b$- and
+$c$-tagging discriminants $D_b$ and $D_c$.
+
+The architecture contains approximately 2.3~million trainable parameters and
+does not include the two auxiliary training objectives of the full ATLAS
+deployment (track-origin classification and track-pair vertex grouping),
+which are identified as the primary target for future extensions.
+\end{abstract}
+
+\end{document}

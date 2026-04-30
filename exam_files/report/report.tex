@@ -1,0 +1,182 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{xcolor}
+
+\geometry{top=2.0cm, bottom=2.0cm, left=2.2cm, right=2.2cm}
+
+\titleformat{\section}{\normalfont\large\bfseries}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{10pt}{5pt}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{}{0em}{}
+\titlespacing{\subsection}{0pt}{6pt}{2pt}
+
+\hypersetup{colorlinks=true, linkcolor=blue!70!black, urlcolor=blue!70!black}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries Project Description}\\[4pt]
+  {\large GN2: Transformer-Based Jet Flavour Tagging in PyTorch}\\[2pt]
+  {\small\color{gray}
+    Based on: ATLAS Collaboration, \textit{Nature Communications} \textbf{17}, 541 (2026)}
+\end{center}
+\vspace{4pt}\hrule\vspace{10pt}
+
+% ─── Motivation ──────────────────────────────────────────────────────────────
+\section{Motivation}
+
+Hadronic jets are the most abundant physics objects in proton--proton collision
+events at the LHC.
+Identifying the flavour of a jet --- whether it originates from a $b$-quark,
+a $c$-quark, a hadronically-decaying $\tau$-lepton, or a light quark/gluon ---
+is crucial for a wide range of ATLAS physics analyses, including measurements
+of Higgs boson couplings ($H\to b\bar{b}$, $H\to c\bar{c}$), searches for
+new physics beyond the Standard Model, and top-quark studies.
+The long lifetime of $b$-hadrons ($\tau\approx 1.5$~ps) causes them to
+travel several millimetres before decaying, producing a secondary vertex
+significantly displaced from the primary interaction point that can be
+reconstructed from inner-tracker information.
+
+Traditional two-stage flavour-tagging algorithms reconstruct displaced
+vertices with specialised low-level tools and then combine their outputs in a
+high-level multivariate classifier (e.g.\ the DL1d deep neural network).
+GN2 replaces this pipeline with a single end-to-end transformer that directly
+processes the raw charged-particle tracks associated with the jet, achieving
+improvements of a factor 1.5--4 over DL1d across its major applications.
+
+% ─── Dataset & Preprocessing ─────────────────────────────────────────────────
+\section{Dataset and Preprocessing (\texttt{preprocess.py}, \texttt{dataset.py})}
+
+The training data consists of ATLAS Monte Carlo simulated $t\bar{t}$ events
+(jets with $20 < p_T < 250$~GeV) and hypothetical $Z'$ boson events
+(jets with $250 < p_T < 6000$~GeV), stored in HDF5 format.
+Each jet provides two level of information:
+\textit{jet-level} features ($p_T$, $\eta$) and
+\textit{track-level} features for up to 40 associated charged-particle
+tracks (transverse and longitudinal impact parameters $d_0$, $z_0$ and their
+significances, angular separation variables, and quality flags).
+A boolean \texttt{valid} field marks real tracks; padded positions are
+zeroed and excluded from attention via a boolean mask.
+
+The preprocessing step (\texttt{preprocess.py}) applies kinematic selection
+($20~\text{GeV} < p_T < 250~\text{GeV}$, $|\eta| < 2.5$), performs a
+stratified 70/15/15 train/val/test split using \texttt{scikit-learn},
+and computes per-feature Z-score normalisation statistics
+(with a log-transform applied to $p_T$ before normalisation)
+\emph{exclusively on the training set}, avoiding any data leakage into
+validation and test sets.
+Statistics are saved to \texttt{norm\_stats.json} and reused at inference time.
+
+The custom \texttt{GN2Dataset} and \texttt{\_BatchCollator} classes sort
+jet indices before each HDF5 read to guarantee contiguous disk access,
+reducing I/O overhead by orders of magnitude compared to per-sample access.
+
+% ─── Architecture ────────────────────────────────────────────────────────────
+\section{Model Architecture (\texttt{model.py})}
+
+The GN2 model processes each jet in four sequential stages.
+
+\begin{enumerate}[leftmargin=*, itemsep=3pt, topsep=3pt]
+  \item \textbf{Per-track initialiser.}
+    Jet features are broadcast to each track slot and concatenated with the
+    track features, producing a combined vector of dimension
+    $n_\text{jet} + n_\text{track}$ per track.
+    A two-layer MLP with hidden size 256 and ReLU activation maps this to
+    an initial track representation of dimension 256.
+
+  \item \textbf{Transformer encoder.}
+    Four encoder layers, each with 8 attention heads, embedding dimension 256,
+    and feed-forward dimension 512, apply multi-head self-attention with
+    pre-LayerNorm.
+    Padded track slots are excluded from attention via a key-padding mask.
+
+  \item \textbf{Attention pooling.}
+    A learned linear query scores each track embedding;
+    softmax weights aggregate the embeddings into a single global jet
+    representation of dimension 128.
+    Fully-masked jets receive uniform weights as a safe fallback.
+
+  \item \textbf{Classification head.}
+    A three-hidden-layer MLP ($128 \to 64 \to 32 \to 4$) with ReLU activation
+    maps the jet representation to four output logits,
+    one for each flavour class ($b$, $c$, light, $\tau$).
+\end{enumerate}
+
+The model contains approximately \textbf{2.3 million} trainable parameters.
+All activations are ReLU; dropout is configurable.
+The \texttt{GN2.from\_checkpoint()} class method enables reproducible
+reloading of trained models from disk.
+
+% ─── Training ────────────────────────────────────────────────────────────────
+\section{Training (\texttt{train.py})}
+
+Training minimises cross-entropy loss on the four-class jet-flavour
+classification task.
+Jets carrying label $-1$ (unmapped flavour codes) are excluded via
+\texttt{ignore\_index=-1}.
+The \textbf{AdamW} optimiser is used with weight decay
+$\lambda = 10^{-5}$.
+The learning-rate schedule exactly reproduces the published ATLAS recipe:
+linear warmup from $10^{-7}$ to $5 \times 10^{-4}$ over the first 1\% of
+training steps, followed by cosine annealing down to $10^{-5}$.
+Gradient norms are clipped to 1.0 at each step.
+On CUDA devices, automatic mixed precision (AMP) is activated transparently.
+The best checkpoint by validation loss is saved to disk and reloaded at the
+end of training; per-epoch losses and learning rates are streamed to
+TensorBoard.
+
+% ─── Evaluation ──────────────────────────────────────────────────────────────
+\section{Evaluation (\texttt{evaluate.py})}
+
+At evaluation time the best checkpoint is loaded and run on the held-out test
+set.
+The pipeline produces the following outputs:
+
+\begin{itemize}[leftmargin=*, itemsep=2pt, topsep=2pt]
+  \item \texttt{metrics.json} --- overall accuracy and per-class
+    precision, recall, and F1-score.
+  \item \texttt{confusion\_matrix.pdf} --- normalised confusion matrix.
+  \item \texttt{score\_distributions.pdf} --- softmax score distributions
+    split by true jet flavour.
+  \item \texttt{roc\_db.pdf} --- ROC curves (background rejection vs.\
+    $b$-jet efficiency) for the discriminant
+    $D_b = \log\!\bigl(p_b / [f_c p_c + f_\tau p_\tau +
+    (1-f_c-f_\tau) p_u]\bigr)$,
+    with ATLAS defaults $f_c = 0.20$, $f_\tau = 0.05$.
+  \item \texttt{roc\_dc.pdf} --- analogous ROC curves for the $c$-tagging
+    discriminant $D_c$ ($f_b = 0.30$, $f_\tau = 0.01$).
+\end{itemize}
+
+All figures use the \texttt{mplhep} ATLAS style.
+
+% ─── Results ─────────────────────────────────────────────────────────────────
+\section{Results}
+
+The table below reports the background rejection values measured by the ATLAS
+Collaboration for GN2 at a 70\% $b$-jet tagging efficiency in simulated
+$t\bar{t}$ events, as reference benchmarks.
+Quantitative results obtained with this implementation will be inserted below
+upon completion of the training run.
+
+\vspace{6pt}
+\begin{center}
+\begin{tabular}{lcc}
+  \toprule
+  Background & GN2 rejection (ATLAS) & This implementation \\
+  \midrule
+  $c$-jet    & $> 3\times$ vs.\ DL1d   & \textit{[to be filled]} \\
+  light-jet  & $> 1.6\times$ vs.\ DL1d & \textit{[to be filled]} \\
+  $\tau$-jet & up to $8\times$ vs.\ DL1d & \textit{[to be filled]} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

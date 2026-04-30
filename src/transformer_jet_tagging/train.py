@@ -23,6 +23,7 @@ Outputs:
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from .dataset import gn2_dataloader
 from .model import GN2
+from .plotting import plot_learning_curves, plot_roc_db, plot_roc_dc
 
 logger = logging.getLogger("GN2.train")
 
@@ -268,6 +270,7 @@ def train(
     model: GN2,
     train_loader: DataLoader,
     val_loader: DataLoader,
+    test_loader: DataLoader,
     config: dict,
     output_dir: Path,
     device: torch.device,
@@ -279,6 +282,7 @@ def train(
         model (GN2): GN2 instance (already on device).
         train_loader (DataLoader): DataLoader for training set.
         val_loader (DataLoader): DataLoader for validation set.
+        test_loader (DataLoader): DataLoader for test set (for final evaluation).
         config (dict): full config dict.
         output_dir (Path): directory where checkpoints and TB runs are saved.
         device (torch.device): torch device.
@@ -289,7 +293,17 @@ def train(
     Raises:
         OSError: if saving the checkpoint fails.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    runs_dir = output_dir / "runs" / run_name
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_best_path = output_dir / "best_model.pt"
+    checkpoint_path = runs_dir / "best_model.pt"
+
+    if checkpoint_best_path.exists():
+        best_model = torch.load(checkpoint_best_path, map_location="cpu")
+        best_model_val_loss = best_model["val_loss"]
+    else:
+        best_model_val_loss = float("inf")
 
     training_config = config.get("training", {})
 
@@ -311,10 +325,9 @@ def train(
     )
 
     scaler = torch.amp.GradScaler() if device.type == "cuda" else None
-    writer = SummaryWriter(log_dir=str(output_dir / "runs"))
+    writer = SummaryWriter(log_dir=str(runs_dir))
 
-    best_val_loss   = float("inf")
-    checkpoint_path = output_dir / "best_model.pt"
+    best_val_loss = float("inf")
 
     history = TrainingHistory()
     for epoch in range(1, n_epochs + 1):
@@ -344,18 +357,28 @@ def train(
 
         if val_losses["total"] < best_val_loss:
             best_val_loss = val_losses["total"]
-            try:
-                torch.save({
+            checkpoint = {
                 "epoch"      : epoch,
                 "model_state": model.state_dict(),
                 "optim_state": optimiser.state_dict(),
                 "val_loss"   : best_val_loss,
                 "config"     : config,
-                }, checkpoint_path)
-                logger.info("    New best val_loss=%s - saved to %s",
+            }
+            try:
+                torch.save(checkpoint, checkpoint_path)
+                logger.info("    New best (run) val_loss=%s - saved to %s",
                             f"{best_val_loss:.4f}", checkpoint_path)
             except OSError as e:
                 logger.error("Failed to save checkpoint to %s: %s", checkpoint_path, e)
+
+            if best_val_loss < best_model_val_loss:
+                best_model_val_loss = best_val_loss
+                try:
+                    torch.save(checkpoint, checkpoint_best_path)
+                    logger.info("    New best (global) model - saved to %s",
+                                checkpoint_best_path)
+                except OSError as e:
+                    logger.error("Failed to save checkpoint to %s: %s", checkpoint_best_path, e)
 
     writer.close()
     logger.info("Training complete.")
@@ -363,7 +386,22 @@ def train(
     # reload best weights before returning
     model = GN2.from_checkpoint(checkpoint_path, device)
 
-    return model, history
+    # plots
+    plot_learning_curves(history.to_dict(), output_dir=runs_dir)
+    plot_roc_db(
+        model      = model,
+        loader     = test_loader,
+        device     = device,
+        output_dir = runs_dir,
+    )
+    plot_roc_dc(
+        model      = model,
+        loader     = test_loader,
+        device     = device,
+        output_dir = runs_dir,
+    )
+
+    return model
 
 
 if __name__ == "__main__":

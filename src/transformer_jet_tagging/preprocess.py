@@ -79,7 +79,7 @@ def save_norm_stats(output_dir: Path, norm_stats: dict) -> None:
     logger.info("Normalization stats saved to %s", out_path)
 
 
-def run_preprocess(config_path: str) -> None:
+def run_preprocess(config: dict) -> None:
     """
     Run the preprocessing pipeline.
 
@@ -91,24 +91,23 @@ def run_preprocess(config_path: str) -> None:
         KeyError: If expected datasets are missing from the HDF5 file.
     """
     # 1. load configuration
-    config = utils.load_config_json(config_path)
     data_config = config["data"]
 
-    file_path   = data_config["data"]["h5_path"]
-    pt_min      = data_config["data"]["pt_min_mev"]
-    pt_max      = data_config["data"]["pt_max_mev"]
-    eta_max     = data_config["data"]["eta_max"]
+    file_path  = data_config["data"]["h5_path"]
+    pt_min     = data_config["data"]["pt_min_mev"]
+    pt_max     = data_config["data"]["pt_max_mev"]
+    eta_max    = data_config["data"]["eta_max"]
     train_frac, val_frac, test_frac = (
         data_config["data"]["train_fraction"],
         data_config["data"]["val_fraction"],
         data_config["data"]["test_fraction"],
     )
-    shuffle     = data_config["data"].get("shuffle", False)
-    seed        = data_config["data"].get("split_seed", 42)
-    jet_vars    = data_config["data"]["jet_features"]
-    track_vars  = data_config["data"]["track_features"]
-    batch_size  = data_config["data"].get("batch_size", 10_000)
-    output_dir  = Path(data_config["output"]["preprocess_dir"])
+    shuffle    = data_config["data"].get("shuffle", False)
+    seed       = data_config["data"].get("split_seed", 42)
+    jet_vars   = data_config["data"]["jet_features"]
+    track_vars = data_config["data"]["track_features"]
+    batch_size = data_config["data"].get("batch_size", 10_000)
+    output_dir = Path(data_config["output"]["preprocess_dir"])
 
     # 2. kinematic selection
     logger.info("Reading kinematics from %s ...", file_path)

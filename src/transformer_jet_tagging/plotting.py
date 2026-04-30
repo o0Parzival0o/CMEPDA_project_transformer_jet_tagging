@@ -423,7 +423,7 @@ def plot_statistics(
         output_dir (str): Directory for output PNGs.
         n_jets_track (int): Max jets for track plots (memory guard).
     """
-    out = Path(output_dir)
+    out = Path(output_dir) / "data_statistics"
     out.mkdir(parents=True, exist_ok=True)
 
     logger.info("Loading jet data for %s jets ...", f"{len(jet_indices):,}")
@@ -456,6 +456,8 @@ def plot_learning_curves(
         history (dict): keys "train_loss", "val_loss", "lr".
         output_dir (Path): Directory where the PDF is saved.
     """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     # loss
@@ -533,6 +535,8 @@ def plot_roc_db(
         fc (float): c-fraction. (default 0.2)
         ftau (float): tau-fraction. (default 0.05)
     """
+    output_dir = output_dir / "results"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     all_db, all_labels = [], []
 
@@ -542,7 +546,18 @@ def plot_roc_db(
             jet_feats   = batch["jet_features"].to(device)
             track_feats = batch["track_features"].to(device)
             mask        = batch["mask"].to(device)
-            db = model.discriminant_db(jet_feats, track_feats, mask, fc=fc, ftau=ftau)
+            db = model.discriminant_db(
+                jet_feats,
+                track_feats,
+                mask,
+                fc=fc, ftau=ftau,
+                label_map = {
+                    "light-jet": 0,
+                    "c-jet": 1,
+                    "b-jet": 2,
+                    "tau-jet": 3
+                }
+            )
             all_db.append(db.cpu().numpy())
             all_labels.append(batch["label"].numpy())
 
@@ -600,6 +615,8 @@ def plot_roc_dc(
         fb (float): b-fraction. (default 0.3)
         ftau (float): tau-fraction. (default 0.01)
     """
+    output_dir = output_dir / "results"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     all_dc, all_labels = [], []
 
@@ -609,7 +626,18 @@ def plot_roc_dc(
             jet_feats   = batch["jet_features"].to(device)
             track_feats = batch["track_features"].to(device)
             mask        = batch["mask"].to(device)
-            dc = model.discriminant_dc(jet_feats, track_feats, mask, fb=fb, ftau=ftau)
+            dc = model.discriminant_dc(
+                jet_feats,
+                track_feats,
+                mask,
+                fb=fb, ftau=ftau,
+                label_map = {
+                    "light-jet": 0,
+                    "c-jet": 1,
+                    "b-jet": 2,
+                    "tau-jet": 3
+                }
+            )
             all_dc.append(dc.cpu().numpy())
             all_labels.append(batch["label"].numpy())
 
